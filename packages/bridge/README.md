@@ -3,6 +3,9 @@
 Type-safe, real-time communication between web apps and their hosts —
 Android WebView, iOS WKWebView, and iframes — with one API.
 
+> ⚠️ **Experimental package** — under active development. APIs may change
+> without notice between versions. Use wisely.
+
 ```bash
 npm install nbridge
 ```
