@@ -61,7 +61,7 @@ nbridge/                         # this folder = the new repo
 - [x] Name: **nBridge** / npm `nbridge` (decided 2026-07-05; verified available)
 - [ ] Claim `nbridge` on npm early with a 0.0.1 placeholder publish
 - [x] License: MIT (decided 2026-07-05)
-- [ ] Create GitHub repo; add MIT LICENSE file; add README stub
+- [x] GitHub repo created & initial commit pushed: https://github.com/mhmd-sdghn/nbridge (2026-07-05)
 - [ ] `pnpm init` workspace root: `pnpm-workspace.yaml` (packages/*, playgrounds/*, docs)
 - [ ] Root tooling: TypeScript (strict), Biome config, `.editorconfig`, `.gitignore`, Lefthook pre-commit (biome)
 - [ ] Node/pnpm version pins (`engines`, `packageManager` field)
