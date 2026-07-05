@@ -1,0 +1,101 @@
+{
+  "name": "nbridge",
+  "version": "0.0.1",
+  "description": "Type-safe real-time bridge between web apps and native Android/iOS WebViews or iframes. Bring-your-own-validator via Standard Schema.",
+  "type": "module",
+  "license": "MIT",
+  "author": "Mo Sadeghian",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mhmd-sdghn/nbridge.git",
+    "directory": "packages/bridge"
+  },
+  "homepage": "https://github.com/mhmd-sdghn/nbridge#readme",
+  "bugs": "https://github.com/mhmd-sdghn/nbridge/issues",
+  "keywords": [
+    "webview",
+    "bridge",
+    "postmessage",
+    "android",
+    "ios",
+    "wkwebview",
+    "iframe",
+    "native",
+    "hybrid",
+    "react"
+  ],
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "files": [
+    "dist"
+  ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./react": {
+      "types": "./dist/react/index.d.ts",
+      "default": "./dist/react/index.js"
+    },
+    "./next": {
+      "types": "./dist/next/index.d.ts",
+      "default": "./dist/next/index.js"
+    },
+    "./devtools": {
+      "types": "./dist/devtools/index.d.ts",
+      "default": "./dist/devtools/index.js"
+    },
+    "./devtools/styles.css": "./dist/devtools/styles.css",
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "tsdown",
+    "build:css": "tailwindcss -i ./src/devtools/styles.source.css -o ./dist/devtools/styles.css --minify",
+    "dev": "tsdown --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "verify:pkg": "publint && attw --pack . --profile esm-only --exclude-entrypoints ./devtools/styles.css ./package.json"
+  },
+  "dependencies": {
+    "pako": "^2.1.0"
+  },
+  "peerDependencies": {
+    "next": ">=14",
+    "react": "^18.0.0 || ^19.0.0",
+    "react-dom": "^18.0.0 || ^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "next": {
+      "optional": true
+    },
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.0",
+    "@tailwindcss/cli": "^4.1.0",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^24.0.0",
+    "@types/pako": "^2.0.4",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "jsdom": "^26.0.0",
+    "next": "^15.3.0",
+    "publint": "^0.3.0",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "tailwindcss": "^4.1.0",
+    "tsdown": "^0.22.3",
+    "typescript": "^5.9.0",
+    "valibot": "^1.1.0",
+    "vitest": "^3.2.0",
+    "zod": "^4.1.0"
+  }
+}

@@ -1,0 +1,8 @@
+/* Build-time input for the precompiled devtools stylesheet.
+   Compiled by `pnpm build:css` (Tailwind v4 CLI) into dist/devtools/styles.css.
+   Only theme variables + the utilities actually used inside src/devtools are
+   emitted — no preflight, so the host page's styles are never reset. */
+@layer theme, utilities;
+@import "tailwindcss/theme" layer(theme);
+@import "tailwindcss/utilities" layer(utilities);
+@source "./";

@@ -1,0 +1,34 @@
+{
+  "name": "nbridge-monorepo",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "pnpm",
+      "version": "^11.9.0",
+      "onFail": "download"
+    }
+  },
+  "scripts": {
+    "build": "pnpm --filter nbridge build",
+    "dev": "pnpm --filter nbridge dev",
+    "test": "pnpm --filter nbridge test",
+    "lint": "biome check .",
+    "lint:fix": "biome check --write .",
+    "typecheck": "pnpm --filter nbridge typecheck",
+    "docs:dev": "pnpm --filter nbridge-docs docs:dev",
+    "docs:build": "pnpm --filter nbridge-docs docs:build",
+    "verify:pkg": "pnpm --filter nbridge verify:pkg",
+    "changeset": "changeset",
+    "release": "pnpm build && changeset publish"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "^2.0.0",
+    "@changesets/changelog-github": "^0.7.0",
+    "@changesets/cli": "^2.29.0"
+  }
+}

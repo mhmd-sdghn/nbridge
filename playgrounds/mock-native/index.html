@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nbridge — mock native playground</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>nbridge <span class="dim">/ mock native playground</span></h1>
+        <p class="dim">
+          A fake <code>window.AndroidBridge</code> is installed before the
+          bridge is created, so nbridge auto-detects the
+          <strong>android</strong> platform and talks to it exactly like a real
+          WebView host. The right panel is executable documentation of the
+          native contract: handshake ack, correlated
+          <code>*_response</code> replies, and <code>__nbridge_batch__</code>
+          unpacking.
+        </p>
+      </div>
+      <div class="badges">
+        <span id="platform-badge" class="badge">platform: …</span>
+        <span id="ready-badge" class="badge badge-wait">handshaking…</span>
+      </div>
+    </header>
+
+    <main class="columns">
+      <!-- LEFT: the web app using nbridge -->
+      <section class="column column-web">
+        <div class="column-head">
+          <h2>Web app <span class="dim">(nbridge)</span></h2>
+        </div>
+
+        <div class="panel">
+          <h3>Actions</h3>
+          <div class="actions">
+            <button id="btn-device-info" class="btn btn-primary" type="button">
+              Get device info
+              <span class="hint">sendWithResponse("device:getInfo")</span>
+            </button>
+            <button id="btn-toast" class="btn btn-primary" type="button">
+              Show toast
+              <span class="hint">send("toast:show")</span>
+            </button>
+            <button id="btn-batch" class="btn btn-primary" type="button">
+              Send 5 events (batched)
+              <span class="hint">5 × send("analytics:event") → one envelope</span>
+            </button>
+          </div>
+          <div id="device-info-result" class="result dim">device info not requested yet</div>
+        </div>
+
+        <div class="panel">
+          <h3>Live metrics</h3>
+          <div class="metrics" id="metrics">
+            <div class="metric"><span class="metric-value" id="m-sent">0</span><span class="metric-label">messages sent</span></div>
+            <div class="metric"><span class="metric-value" id="m-received">0</span><span class="metric-label">messages received</span></div>
+            <div class="metric"><span class="metric-value" id="m-bytes-sent">0</span><span class="metric-label">bytes sent</span></div>
+            <div class="metric"><span class="metric-value" id="m-bytes-received">0</span><span class="metric-label">bytes received</span></div>
+            <div class="metric"><span class="metric-value" id="m-avg">0 ms</span><span class="metric-label">avg response time</span></div>
+            <div class="metric"><span class="metric-value" id="m-success">100%</span><span class="metric-label">success rate</span></div>
+          </div>
+        </div>
+
+        <div class="panel panel-grow">
+          <div class="row space-between">
+            <h3>Web log</h3>
+            <button id="clear-web-log" class="btn btn-small" type="button">Clear</button>
+          </div>
+          <div id="web-log" class="log" aria-live="polite"></div>
+        </div>
+      </section>
+
+      <!-- RIGHT: the fake native host -->
+      <section class="column column-native">
+        <div class="column-head">
+          <h2>Fake native host <span class="dim">(mock Android WebView)</span></h2>
+        </div>
+
+        <div class="panel">
+          <h3>Implemented contract</h3>
+          <ul class="contract">
+            <li><code>AndroidBridge.postMessage(json)</code> — receives every web→native message as a JSON string</li>
+            <li><code>__nbridge_handshake__</code> → replies <code>__nbridge_handshake_ack__</code></li>
+            <li><code>__nbridge_batch__</code> → unpacks <code>payload.messages</code>, handles each entry</li>
+            <li><code>device:getInfo</code> → replies <code>device:getInfo_response</code> with the same <code>id</code></li>
+            <li><code>toast:show</code> → renders a fake Android toast</li>
+            <li>Replies delivered via <code>window.sendBridgeMessage(json)</code> after a randomized 80–350&nbsp;ms delay</li>
+          </ul>
+        </div>
+
+        <div class="panel panel-grow">
+          <div class="row space-between">
+            <h3>Native log</h3>
+            <button id="clear-native-log" class="btn btn-small" type="button">Clear</button>
+          </div>
+          <div id="native-log" class="log" aria-live="polite"></div>
+        </div>
+      </section>
+    </main>
+
+    <div id="toast-root" class="toast-root" aria-live="polite"></div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

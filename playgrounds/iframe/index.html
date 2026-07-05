@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nbridge — iframe playground (parent host)</title>
+  </head>
+  <body class="parent-page">
+    <header class="parent-topbar">
+      <div>
+        <h1>Parent host <span class="dim">(raw postMessage — no nbridge)</span></h1>
+        <p class="dim">
+          This outer page implements the host side of the nbridge iframe
+          contract by hand: it listens for <code>message</code> events from the
+          embedded child, checks origin and source, acks the handshake, answers
+          <code>parent:getTitle</code> requests, and can push messages into the
+          child with <code>iframe.contentWindow.postMessage</code>. The child
+          (inside the dashed border) uses nbridge and auto-detects the
+          <strong>iframe</strong> platform.
+        </p>
+      </div>
+    </header>
+
+    <main class="parent-layout">
+      <div class="iframe-wrap">
+        <div class="frame-label">&lt;iframe src="/child.html"&gt; — child app using nbridge</div>
+        <iframe id="child-frame" src="/child.html" title="nbridge child app"></iframe>
+      </div>
+
+      <div class="parent-side">
+        <div class="panel">
+          <h3>Host contract implemented here</h3>
+          <ul class="contract">
+            <li>Accept only events where <code>event.source === iframe.contentWindow</code> and <code>event.origin === location.origin</code></li>
+            <li><code>__nbridge_handshake__</code> → reply <code>__nbridge_handshake_ack__</code></li>
+            <li><code>parent:getTitle</code> → reply <code>parent:getTitle_response</code> with the same <code>id</code></li>
+            <li><code>__nbridge_batch__</code> → unpack <code>payload.messages</code></li>
+          </ul>
+        </div>
+
+        <div class="panel">
+          <h3>Push into the child</h3>
+          <p class="dim" style="font-size: 13px">
+            Sends <code>{ type: "parent:ping" }</code> into the iframe; the
+            child's <code>bridge.on("parent:ping")</code> listener logs it.
+          </p>
+          <button id="btn-ping-child" class="btn btn-primary" type="button">
+            postMessage("parent:ping") → child
+          </button>
+        </div>
+
+        <div class="panel">
+          <div class="row space-between">
+            <h3>Parent traffic log</h3>
+            <button id="clear-parent-log" class="btn btn-small" type="button">Clear</button>
+          </div>
+          <div id="parent-log" class="log" aria-live="polite"></div>
+        </div>
+      </div>
+    </main>
+
+    <script type="module" src="/src/parent.ts"></script>
+  </body>
+</html>

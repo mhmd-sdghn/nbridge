@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nbridge — vanilla playground</title>
+  </head>
+  <body>
+    <header class="topbar">
+      <div>
+        <h1>nbridge <span class="dim">/ vanilla playground</span></h1>
+        <p class="dim">
+          Plain TypeScript + Vite. Web-fallback adapter with
+          <code>webLoopback: true</code> — every sent message echoes back into
+          the incoming pipeline, so the handshake self-completes and handlers
+          fire locally.
+        </p>
+      </div>
+      <div class="badges">
+        <span id="platform-badge" class="badge">platform: …</span>
+        <span id="ready-badge" class="badge badge-wait">connecting…</span>
+      </div>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <h2>Send a message</h2>
+        <p class="dim">
+          Fire-and-forget via <code>bridge.send(type, payload)</code>. Loopback
+          delivers it straight back, so the <code>bridge.on</code> listener in
+          the log panel catches it.
+        </p>
+        <form id="send-form">
+          <label for="msg-type">Message type</label>
+          <input id="msg-type" type="text" value="chat:message" spellcheck="false" />
+          <label for="msg-payload">Payload (JSON)</label>
+          <textarea id="msg-payload" rows="4" spellcheck="false">{ "text": "hello from the web side" }</textarea>
+          <button type="submit" class="btn btn-primary">Send</button>
+          <span id="send-error" class="error" hidden></span>
+        </form>
+      </section>
+
+      <section class="panel">
+        <h2>Request / response round-trip</h2>
+        <p class="dim">
+          An <code>onWithResponse("math:square")</code> handler is registered on
+          this same bridge. <code>sendWithResponse("math:square", { n })</code>
+          loops out and back: the handler squares the number and replies with a
+          correlated <code>math:square_response</code>.
+        </p>
+        <div class="row">
+          <label for="square-n">n =</label>
+          <input id="square-n" type="number" value="7" class="input-num" />
+          <button id="square-btn" class="btn btn-primary" type="button">
+            sendWithResponse("math:square")
+          </button>
+        </div>
+        <div id="square-result" class="result dim">no request sent yet</div>
+      </section>
+
+      <section class="panel panel-wide">
+        <div class="row space-between">
+          <h2>Message log</h2>
+          <button id="clear-log" class="btn" type="button">Clear</button>
+        </div>
+        <div id="log" class="log" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

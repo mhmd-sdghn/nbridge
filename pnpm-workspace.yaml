@@ -1,0 +1,8 @@
+packages:
+  - packages/*
+  - playgrounds/*
+  - docs
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  sharp: true

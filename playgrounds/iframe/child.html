@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>nbridge — iframe playground (child)</title>
+  </head>
+  <body class="child-page">
+    <header class="child-topbar">
+      <h1>Child app <span class="dim">(nbridge, platform: iframe)</span></h1>
+      <div class="row">
+        <span id="platform-badge" class="badge">platform: …</span>
+        <span id="ready-badge" class="badge badge-wait">handshaking…</span>
+      </div>
+    </header>
+
+    <div class="actions">
+      <button id="btn-send" class="btn btn-primary" type="button">
+        send("child:event")
+      </button>
+      <button id="btn-title" class="btn btn-primary" type="button">
+        sendWithResponse("parent:getTitle")
+      </button>
+    </div>
+
+    <div id="title-result" class="result dim">parent title not requested yet</div>
+
+    <div class="panel" style="margin-top: 12px">
+      <div class="row space-between">
+        <h3>Child log</h3>
+        <button id="clear-child-log" class="btn btn-small" type="button">Clear</button>
+      </div>
+      <div id="child-log" class="log" aria-live="polite"></div>
+    </div>
+
+    <script type="module" src="/src/child.ts"></script>
+  </body>
+</html>
