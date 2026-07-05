@@ -2,11 +2,11 @@
 
 **Type-safe, real-time communication between web apps and their hosts — Android WebView, iOS WKWebView, and iframes — with one API.**
 
-> ⚠️ Under active development. Not yet published.
+> ⚠️ **Experimental package** — early pre-release (`v0.0.1`), under active development. APIs may change without notice. Use wisely.
 
-- 📦 Package: [`packages/bridge`](packages/bridge) → npm `nbridge`
+- 📦 Package: [`nbridge` on npm](https://www.npmjs.com/package/nbridge) — source in [`packages/bridge`](packages/bridge)
+- 📖 Docs: [nbridge-tau.vercel.app](https://nbridge-tau.vercel.app) — source in [`docs/`](docs)
 - 🎮 Playgrounds: [`playgrounds/`](playgrounds) — run `pnpm dev` demos
-- 📖 Docs site: [`docs/`](docs) — VitePress landing + documentation
 
 ## Features
 

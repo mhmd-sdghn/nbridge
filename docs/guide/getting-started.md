@@ -3,7 +3,7 @@
 nBridge gives your web app one API for talking to whatever hosts it — an Android WebView, an iOS WKWebView, or a parent page around an iframe. It detects the transport at runtime, correlates requests with responses, and (optionally) validates every payload with the schema library you already use.
 
 ::: warning Pre-release
-nBridge is at `v0.0.1` and not yet published to npm. The API documented here matches the current source. ESM-only.
+nBridge is at `v0.0.1` — early pre-release, APIs may change between versions. ESM-only.
 :::
 
 ## Installation
