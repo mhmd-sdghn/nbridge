@@ -7,13 +7,6 @@
     "node": ">=20"
   },
   "packageManager": "pnpm@11.10.0",
-  "devEngines": {
-    "packageManager": {
-      "name": "pnpm",
-      "version": "^11.9.0",
-      "onFail": "download"
-    }
-  },
   "scripts": {
     "build": "pnpm --filter nbridge build",
     "dev": "pnpm --filter nbridge dev",

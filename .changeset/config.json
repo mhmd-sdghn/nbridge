@@ -8,7 +8,6 @@
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
   "ignore": [
-    "nbridge-monorepo",
     "nbridge-docs",
     "playground-vanilla",
     "playground-mock-native",
