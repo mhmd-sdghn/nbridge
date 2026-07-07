@@ -88,6 +88,8 @@ export function SuccessScreen() {
 
 The intercept is one-shot: after it fires once (sending the shutdown event) it unregisters itself, so a second back press can never double-fire.
 
+An empty dependency array is fine here — the effect is safe under React StrictMode's dev-only mount → cleanup → remount cycle (the intercept manager distinguishes its own history cleanup from a real back press, so remounting never triggers a shutdown). All functions returned by `useBridgeBack` are also referentially stable (`useCallback`), so including them in a dependency array is equally safe.
+
 ## Lower-level exports
 
 For custom setups, `nbridge/next` also exports the pieces `useBridgeBack` is built from:

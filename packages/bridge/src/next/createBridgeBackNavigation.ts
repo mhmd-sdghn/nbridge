@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname, useRouter } from "next/navigation";
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import type { IBridgeManager } from "../types";
 import {
   ensureSessionHistoryTracking,
@@ -65,47 +65,51 @@ export function createBridgeBackNavigation(
       }
     }, [pathname, navigationMode]);
 
-    function canRouterBack(): boolean {
-      return canNavigateBack({ mode: navigationMode });
-    }
+    const canRouterBack = useCallback(
+      () => canNavigateBack({ mode: navigationMode }),
+      [navigationMode],
+    );
 
-    async function sendShutdownEvent() {
+    const sendShutdownEvent = useCallback(async () => {
       try {
         await bridge.send(shutdownEvent, {});
       } catch (err) {
         console.error("[nbridge] Failed to send shutdown message:", err);
       }
-    }
+    }, []);
 
-    function forceBrowserBackToShutdownApp() {
+    const forceBrowserBackToShutdownApp = useCallback(() => {
       if (typeof window === "undefined") return;
       removeInterceptRef.current?.();
       removeInterceptRef.current = setupBackInterception(() => {
         void sendShutdownEvent();
       });
-    }
+    }, [sendShutdownEvent]);
 
-    function removeForceBrowserBackToShutdownApp() {
+    const removeForceBrowserBackToShutdownApp = useCallback(() => {
       removeInterceptRef.current?.();
       removeInterceptRef.current = null;
-    }
+    }, []);
 
-    async function routerBackOrShutdown(force?: BridgeBackAction) {
-      const resolvedMode = resolveNavigationMode({ mode: navigationMode });
+    const routerBackOrShutdown = useCallback(
+      async (force?: BridgeBackAction) => {
+        const resolvedMode = resolveNavigationMode({ mode: navigationMode });
 
-      const shouldUseRouter =
-        (canRouterBack() && force !== BridgeBackAction.AppShutdown) ||
-        force === BridgeBackAction.RouterBack;
+        const shouldUseRouter =
+          (canRouterBack() && force !== BridgeBackAction.AppShutdown) ||
+          force === BridgeBackAction.RouterBack;
 
-      if (shouldUseRouter) {
-        if (resolvedMode === "session") {
-          prepareSessionForRouterBack();
+        if (shouldUseRouter) {
+          if (resolvedMode === "session") {
+            prepareSessionForRouterBack();
+          }
+          router.back();
+        } else if (!force || force === BridgeBackAction.AppShutdown) {
+          await sendShutdownEvent();
         }
-        router.back();
-      } else if (!force || force === BridgeBackAction.AppShutdown) {
-        await sendShutdownEvent();
-      }
-    }
+      },
+      [navigationMode, canRouterBack, router, sendShutdownEvent],
+    );
 
     return {
       routerBackOrShutdown,

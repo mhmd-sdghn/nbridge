@@ -13,6 +13,15 @@ class BackInterceptManager {
   private stacks: Map<string, InterceptEntry[]> = new Map();
   private counter = 0;
   private popstateHandler: (() => void) | null = null;
+  /**
+   * True while a `history.back()` issued by the manager itself (to release
+   * the trap entry) has not landed yet. `history.back()` is asynchronous, so
+   * an unregister→register cycle within the same tick (React StrictMode's dev
+   * remount, or effect-deps churn) would otherwise let the in-flight pop be
+   * mistaken for a real user back press and misfire the intercept callback.
+   * At most one self-pop is ever outstanding; handlePopstate consumes it.
+   */
+  private selfPopInFlight = false;
 
   private constructor() {}
 
@@ -64,6 +73,7 @@ class BackInterceptManager {
     this.teardownListener();
     this.stacks.clear();
     this.counter = 0;
+    this.selfPopInFlight = false;
   }
 
   private generateId(): string {
@@ -153,20 +163,35 @@ class BackInterceptManager {
     }
   }
 
+  /** Pops the trap entry; see `selfPopInFlight`. */
+  private popTrapSilently(): void {
+    // Only a delivered popstate can consume the flag; without a listener the
+    // pop lands unobserved and cannot be mistaken for a user press anyway.
+    if (this.popstateHandler) {
+      this.selfPopInFlight = true;
+    }
+    window.history.back();
+  }
+
   private ensureTrap(): void {
     if (!this.popstateHandler) {
       this.setupListener();
     }
+    // With a self-pop in flight we are still on the trap entry — keep it;
+    // handlePopstate re-pushes after the pop lands.
     if (!this.isTrapEntry()) {
       this.pushTrap();
     }
   }
 
   private teardownTrap(): void {
-    this.teardownListener();
+    if (this.selfPopInFlight) return; // the pop's landing re-syncs the trap
     if (this.isTrapEntry()) {
-      window.history.back();
+      // Keep the listener attached — it must consume the self-pop's popstate.
+      this.popTrapSilently();
+      return;
     }
+    this.teardownListener();
   }
 
   private syncTrap(): void {
@@ -179,6 +204,13 @@ class BackInterceptManager {
   }
 
   private handlePopstate(): void {
+    if (this.selfPopInFlight) {
+      // Our own trap-release back() landing — not a user back press.
+      this.selfPopInFlight = false;
+      this.syncTrap();
+      return;
+    }
+
     const currentPath = window.location.pathname;
     const isTrap = this.isTrapEntry();
 
@@ -196,10 +228,9 @@ class BackInterceptManager {
       return;
     }
 
-    // No active intercept found — remove listener first to prevent loop,
-    // then pop the trap we just pushed so natural navigation proceeds.
-    this.teardownListener();
-    window.history.back();
+    // No active intercept found — pop the trap we just pushed so natural
+    // navigation proceeds; syncTrap tears the listener down once it lands.
+    this.popTrapSilently();
   }
 }
 

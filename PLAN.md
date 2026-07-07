@@ -107,6 +107,7 @@ nbridge/                         # this folder = the new repo
 - [x] `teardownSessionHistoryTracking()` exported for production teardown
 - [ ] `BackInterceptManager`: iOS swipe-back multi-pop hardening — DEFERRED, known limitation (needs device testing; revisit before 1.0)
 - [x] `setupBackInterception` one-shot self-unregisters after firing (no double shutdown)
+- [x] `BackInterceptManager` (2026-07-07): self-initiated trap-release `history.back()` tracked via `selfPopInFlight` and consumed in `handlePopstate`, so an unregister→register cycle in the same tick (React StrictMode dev remount, effect-deps churn) no longer misfires the intercept on mount; `useBridgeBack` returns `useCallback`-stable functions
 - [ ] `canNavigateBack` browser-mode referrer heuristic — kept as-is, documented; "session" mode (default) is unaffected
 - [ ] Iframe origin hard-require — kept as warn-on-wildcard default for DX; docs strongly push `iframeParentOrigin`. Revisit for 1.0 (consider making it required)
 - [x] `BridgeDevTools`: runtime `setEnabled()`, interceptor-stacking guard (marker on wrapped console fns), no collection/patching in production builds
