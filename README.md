@@ -2,10 +2,10 @@
 
 **Type-safe, real-time communication between web apps and their hosts — Android WebView, iOS WKWebView, and iframes — with one API.**
 
-> ⚠️ **Experimental package** — early pre-release (`v0.0.1`), under active development. APIs may change without notice. Use wisely.
+> ⚠️ **Experimental** — under active development. APIs may change without notice. Use wisely.
 
 - 📦 Package: [`nbridge` on npm](https://www.npmjs.com/package/nbridge) — source in [`packages/bridge`](packages/bridge)
-- 📖 Docs: [nbridge-tau.vercel.app](https://nbridge-tau.vercel.app) — source in [`docs/`](docs)
+- 📖 Docs: [mhmd-sdghn.github.io/nbridge](https://mhmd-sdghn.github.io/nbridge) — source in [`docs/`](docs)
 - 🎮 Playgrounds: [`playgrounds/`](playgrounds) — run `pnpm dev` demos
 
 ## Features
@@ -25,7 +25,7 @@
 ### First-time setup
 
 ```bash
-pnpm install        # from the repo root (Node >= 20, pnpm >= 11)
+pnpm install        # from the repo root (Node >= 22, pnpm >= 11)
 pnpm build          # build the library once — playgrounds import from dist/
 ```
 

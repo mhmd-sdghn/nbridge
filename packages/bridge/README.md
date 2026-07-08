@@ -50,7 +50,7 @@ const user = await bridge.sendWithResponse("getUser", { id: "1" });
   and live **metrics**.
 - ESM-only, side-effect-free tree-shakeable core.
 
-Full documentation: see the `docs/` site in this repository (VitePress).
+Full documentation: [mhmd-sdghn.github.io/nbridge](https://mhmd-sdghn.github.io/nbridge)
 
 ## License
 

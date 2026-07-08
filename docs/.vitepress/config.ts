@@ -1,10 +1,8 @@
 import { defineConfig } from "vitepress";
 
-// GitHub Pages serves this project site under /nbridge/, so assets must be
-// prefixed with that base. Vercel (nbridge-tau.vercel.app) and local dev serve
-// from the root, so they use "/". The GITHUB_ACTIONS env var is set only on the
-// Pages build runner.
-const base = process.env.GITHUB_ACTIONS ? "/nbridge/" : "/";
+// This is a GitHub Pages project site served under /nbridge/, so every asset
+// must be prefixed with that base path.
+const base = "/nbridge/";
 
 export default defineConfig({
   base,

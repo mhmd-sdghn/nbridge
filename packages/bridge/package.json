@@ -10,7 +10,7 @@
     "url": "git+https://github.com/mhmd-sdghn/nbridge.git",
     "directory": "packages/bridge"
   },
-  "homepage": "https://github.com/mhmd-sdghn/nbridge#readme",
+  "homepage": "https://mhmd-sdghn.github.io/nbridge",
   "bugs": "https://github.com/mhmd-sdghn/nbridge/issues",
   "keywords": [
     "webview",
