@@ -59,12 +59,12 @@ nbridge/                         # this folder = the new repo
 ## Phase 0 — Decisions & bootstrap
 
 - [x] Name: **nBridge** / npm `nbridge` (decided 2026-07-05; verified available)
-- [ ] Claim `nbridge` on npm early with a 0.0.1 placeholder publish
+- [x] Claim `nbridge` on npm early with a 0.0.1 placeholder publish (v0.0.1 published 2026-07-05)
 - [x] License: MIT (decided 2026-07-05)
 - [x] GitHub repo created & initial commit pushed: https://github.com/mhmd-sdghn/nbridge (2026-07-05)
-- [ ] `pnpm init` workspace root: `pnpm-workspace.yaml` (packages/*, playgrounds/*, docs)
-- [ ] Root tooling: TypeScript (strict), Biome config, `.editorconfig`, `.gitignore`, Lefthook pre-commit (biome)
-- [ ] Node/pnpm version pins (`engines`, `packageManager` field)
+- [x] `pnpm init` workspace root: `pnpm-workspace.yaml` (packages/*, playgrounds/*, docs)
+- [x] Root tooling: TypeScript (strict), Biome config, `.editorconfig`, `.gitignore`, Lefthook pre-commit (biome) (2026-07-08)
+- [x] Node/pnpm version pins (`engines`, `packageManager` field)
 
 ## Phase 1 — Package scaffold & build pipeline ✅ (2026-07-05)
 
@@ -73,7 +73,7 @@ nbridge/                         # this folder = the new repo
 - [x] Tailwind v4 CLI build step → precompiled `dist/devtools/styles.css` (theme+utilities layers only, no preflight)
 - [x] `publint` ("All good") + `attw --profile esm-only` green; wired as `pnpm verify:pkg`
 - [ ] Smoke-test install: `pnpm pack` → install tarball in a throwaway app outside the workspace (playgrounds import via workspace link — tarball test still worth doing before first publish)
-- [ ] Add `repository`/`homepage`/`bugs` fields once the GitHub repo URL is final
+- [x] Add `repository`/`homepage`/`bugs` fields once the GitHub repo URL is final
 
 ## Phase 2 — Extract & decouple (from `features/packages/bridge`) ✅ (2026-07-05)
 
@@ -146,7 +146,7 @@ nbridge/                         # this folder = the new repo
 - [x] `release.yml`: changesets action → version PR → npm publish with provenance (needs `NPM_TOKEN` secret)
 - [x] `docs.yml`: VitePress build → GitHub Pages (enable Pages → "GitHub Actions" source in repo settings)
 - [x] `.changeset/config.json` (changelog-github, ignores docs/playgrounds)
-- [ ] Branch protection + PR template requiring a changeset (do in GitHub settings after repo creation)
+- [ ] Branch protection + PR template requiring a changeset — PR template added (`.github/pull_request_template.md`, 2026-07-08); branch protection still to do in GitHub settings
 - [ ] First green CI run on the real repo
 
 ## Phase 7 — Docs website + landing page ✅ (2026-07-05) — `pnpm docs:build` green, zero dead links

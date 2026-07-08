@@ -1,6 +1,9 @@
 {
   "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
-  "changelog": ["@changesets/changelog-github", { "repo": "mhmd-sdghn/nbridge" }],
+  "changelog": [
+    "@changesets/changelog-github",
+    { "repo": "mhmd-sdghn/nbridge" }
+  ],
   "commit": false,
   "fixed": [],
   "linked": [],
