@@ -72,7 +72,7 @@ nbridge/                         # this folder = the new repo
 - [x] `tsdown.config.ts` (tsdown 0.22): 4 entries, ESM, `.d.ts`, `"use client"` preserved
 - [x] Tailwind v4 CLI build step → precompiled `dist/devtools/styles.css` (theme+utilities layers only, no preflight)
 - [x] `publint` ("All good") + `attw --profile esm-only` green; wired as `pnpm verify:pkg`
-- [ ] Smoke-test install: `pnpm pack` → install tarball in a throwaway app outside the workspace (playgrounds import via workspace link — tarball test still worth doing before first publish)
+- [x] Smoke-test install (2026-07-08): `pnpm pack` → installed the `nbridge-0.0.1.tgz` tarball in a standalone app outside the workspace. Consumer `tsc` (bundler resolution) resolves all 4 subpath entries (`.`/`./react`/`./next`/`./devtools`); core ESM entry loads + runs in plain Node; `nbridge/devtools/styles.css` resolves
 - [x] Add `repository`/`homepage`/`bugs` fields once the GitHub repo URL is final
 
 ## Phase 2 — Extract & decouple (from `features/packages/bridge`) ✅ (2026-07-05)
@@ -131,13 +131,13 @@ nbridge/                         # this folder = the new repo
 - [ ] Iframe boundary integration test in a real browser (Vitest browser mode or Playwright)
 - [x] Type-level tests (`test/types.test.ts`, 2026-07-08): `expectTypeOf` on `defineMessage` inference (zod + valibot + transform + no-schema fallback) and registry `MessageTypes`/`PayloadFor`/`ResponseFor`; enforced by `pnpm typecheck`
 
-## Phase 5 — Dev environment (playgrounds) — 4 of 5 done (2026-07-05), all build+typecheck green
+## Phase 5 — Dev environment (playgrounds) — 5 of 5 done (2026-07-08), all build+typecheck green
 
 - [x] `playgrounds/vanilla` — loopback + handshake, send form, onWithResponse round-trip
 - [x] `playgrounds/react` — all hooks + DevToolsUI panel + devtools styles.css
 - [x] `playgrounds/iframe` — nbridge child + RAW-postMessage parent host (executable parent-side contract doc)
 - [x] `playgrounds/mock-native` — fake `window.AndroidBridge` host: handshake ack, batch unpack, delayed responders, fake toast, live metrics (executable native contract doc)
-- [ ] `playgrounds/next` — App Router app for the `nbridge/next` entry (deferred; heavier dep, add when validating next entry end-to-end)
+- [x] `playgrounds/next` (2026-07-08) — App Router app exercising `nbridge/next`: module-scope `createBridgeHooks` (SSR-safe), `useBridgeBack` router-back-or-shutdown across home/details/success routes, one-shot hardware-back intercept on the success screen. `next build` prerenders all 6 routes clean (proves the `next` entry works end-to-end under RSC/SSR)
 - [x] CONTRIBUTING.md documents the dev loop (tsdown watch + playground)
 
 ## Phase 6 — CI/CD (GitHub Actions) — workflows written (2026-07-05), untested until repo exists
