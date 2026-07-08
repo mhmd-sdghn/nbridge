@@ -1,12 +1,22 @@
 import { defineConfig } from "vitepress";
 
+// GitHub Pages serves this project site under /nbridge/, so assets must be
+// prefixed with that base. Vercel (nbridge-tau.vercel.app) and local dev serve
+// from the root, so they use "/". The GITHUB_ACTIONS env var is set only on the
+// Pages build runner.
+const base = process.env.GITHUB_ACTIONS ? "/nbridge/" : "/";
+
 export default defineConfig({
+  base,
   title: "nBridge",
   description:
     "Type-safe, real-time communication between web apps and their hosts — Android WebView, iOS WKWebView, and iframes — with one API.",
   cleanUrls: true,
 
-  head: [["link", { rel: "icon", type: "image/svg+xml", href: "/logo.svg" }]],
+  // `head` hrefs are emitted verbatim (no automatic base prefix), so add it here.
+  head: [
+    ["link", { rel: "icon", type: "image/svg+xml", href: `${base}logo.svg` }],
+  ],
 
   themeConfig: {
     logo: "/logo.svg",
