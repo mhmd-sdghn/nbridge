@@ -121,15 +121,15 @@ nbridge/                         # this folder = the new repo
 - [x] Panel has `role="dialog"` + tablist/tab ARIA semantics (focus trap still TODO — minor)
 - [x] No manual memoization left in devtools components
 
-## Phase 4 — Tests — core done (2026-07-05): 30 tests, 3 files, all passing
+## Phase 4 — Tests — 50 tests, 6 files, all passing (core 2026-07-05; hooks + type tests 2026-07-08)
 
 - [x] Vitest (jsdom) configured; NEW suite written instead of porting the old jest files (old suite tested managers in isolation — the exact anti-pattern that hid the inert features)
   - `test/core-messaging.test.ts` — send/receive/respond, id correlation, timeout, handshake (both directions + timeout rejection), WebAdapter honesty, loopback
   - `test/features-wiring.test.ts` — compression on-wire + cross-config decompress, batch envelope/immediate-flush/no-batch-for-rpc/receive-unpack, queue enqueue-on-failure/priority-drain, metrics counters/failures, middleware transform + no-unhandled-rejection
   - `test/schema-validation.test.ts` — zod AND valibot (validator-agnostic), transforms applied to the wire, response validation, no-validator mode
-- [ ] React hooks tests (`createBridgeHooks` — ready state, RPC correlation) — next up
+- [x] React hooks tests (`test/react-hooks.test.tsx`, 2026-07-08): ready-state (immediate/handshake-timeout-as-error/ack-flip), `useBridgeMessage` latest-closure + unmount, `useBridgeRequest` loading/data/timeout, `useBridgeRPC` id correlation for concurrent calls + foreign-response rejection
 - [ ] Iframe boundary integration test in a real browser (Vitest browser mode or Playwright)
-- [ ] Type-level tests (`expectTypeOf`) for schema inference
+- [x] Type-level tests (`test/types.test.ts`, 2026-07-08): `expectTypeOf` on `defineMessage` inference (zod + valibot + transform + no-schema fallback) and registry `MessageTypes`/`PayloadFor`/`ResponseFor`; enforced by `pnpm typecheck`
 
 ## Phase 5 — Dev environment (playgrounds) — 4 of 5 done (2026-07-05), all build+typecheck green
 
@@ -172,4 +172,5 @@ nbridge/                         # this folder = the new repo
 | --- | --- |
 | 2026-07-05 | Investigation complete (coupling audit, unfinished-feature review via 2 agents, toolchain + website decisions). Plan created. No code yet. |
 | 2026-07-05 | Name decided: **nBridge** (npm `nbridge`, verified available). License: MIT. Folder renamed to `C:\Users\Mo\Projects\nbridge`. |
+| 2026-07-08 | Completed the simple remaining checklist items: root tooling finished (`.editorconfig`, Lefthook pre-commit running Biome), PR template with changeset requirement, and Phase-0/1 items verified + checked off. Added Phase-4 React hooks tests + type-level (`expectTypeOf`) tests — suite now 50 tests / 6 files, lint + typecheck green. Remaining are all external (npm/GitHub/CI/device) or deferred-by-design (iOS swipe-back, iframe origin, next playground, real-browser iframe test, 1.0 release). |
 | 2026-07-05 | **Big build session — Phases 1–3 + most of 4–7 DONE.** Workspace scaffolded (pnpm/tsdown 0.22/vitest/biome/changesets). Library extracted + decoupled (Standard Schema, 4 entries, no zod/lucide/uuid). ALL inert features wired for real (handshake, compression, batching, queue, metrics) + review bugs fixed. 30/30 tests green; publint+attw green; 4 playgrounds build; VitePress docs+landing build. CI/release/docs workflows written. **Remaining:** Mo creates GitHub repo + npm claim; then first CI run, tarball smoke test, hooks tests, next-playground, iOS swipe-back hardening, dogfood in rajman, 0.x → 1.0 (Phase 8). |
