@@ -11,6 +11,14 @@ import {
   useBridgeSend,
   usePlatform,
 } from "./bridge";
+import {
+  CapabilityGate,
+  host,
+  useCapability,
+  useHostInfo,
+  useVariant,
+  VariantSwitch,
+} from "./host";
 
 interface LogEntry {
   id: number;
@@ -202,6 +210,8 @@ export default function App() {
           </p>
         </section>
 
+        <HostRulesDemo />
+
         <section className="panel panel-wide">
           <div className="row space-between">
             <h2>Message log</h2>
@@ -234,9 +244,69 @@ export default function App() {
         </section>
       </main>
 
-      {/* In-page DevTools panel (Ctrl+Shift+B). Renders only in dev builds. */}
-      <DevToolsUI bridge={instance} />
+      {/* In-page DevTools panel (Ctrl+Shift+B). Renders only in dev builds.
+          Passing `host` adds the "Host" tab with live platform/version
+          override controls. */}
+      <DevToolsUI bridge={instance} host={host} />
     </div>
+  );
+}
+
+// Host Rules demo — capabilities, a variant, and a gate component, all driven
+// by the resolved (platform, version). Change the version with ?hv=<n> on the
+// URL, or override the platform in the DevTools "Host" tab.
+function HostRulesDemo() {
+  const info = useHostInfo();
+  const nativeShare = useCapability("nativeShare");
+  const betaBanner = useCapability("betaBanner");
+  const saveFlow = useVariant("saveFlow");
+
+  return (
+    <section className="panel">
+      <h2>Host Rules</h2>
+      <p className="dim" style={{ fontSize: 13 }}>
+        Resolved from{" "}
+        <code>{`(${info.platform}, ${info.version ?? "—"})`}</code>. Append{" "}
+        <code>?hv=2</code> or <code>?hv=3</code> to the URL, or override the
+        platform in the DevTools <strong>Host</strong> tab.
+      </p>
+
+      <div className="badges" style={{ marginBottom: 12 }}>
+        <span className={`badge ${nativeShare ? "badge-ok" : "badge-err"}`}>
+          nativeShare: {String(nativeShare)}
+        </span>
+        <span className={`badge ${betaBanner ? "badge-ok" : "badge-err"}`}>
+          betaBanner: {String(betaBanner)}
+        </span>
+        <span className="badge">saveFlow: {saveFlow}</span>
+      </div>
+
+      <CapabilityGate
+        capability="nativeShare"
+        fallback={
+          <button type="button" className="btn" disabled>
+            Copy link (nativeShare off)
+          </button>
+        }
+      >
+        <button type="button" className="btn btn-primary">
+          Native share
+        </button>
+      </CapabilityGate>
+
+      <div className="result" style={{ marginTop: 12 }}>
+        Save button routes to:{" "}
+        <VariantSwitch
+          name="saveFlow"
+          cases={{
+            A: <strong>/save (default flow A)</strong>,
+            B: <strong>/save/native (flow B)</strong>,
+            C: <strong>/save/v3 (flow C)</strong>,
+          }}
+          fallback={<em>unknown</em>}
+        />
+      </div>
+    </section>
   );
 }
 

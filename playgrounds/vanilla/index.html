@@ -59,6 +59,54 @@
       </section>
 
       <section class="panel panel-wide">
+        <h2>Host Rules</h2>
+        <p class="dim">
+          <code>defineHostRules</code> resolves named capabilities and variants
+          from <code>(platform, version)</code>. Version comes from
+          <code>?hv=&lt;n&gt;</code> on the URL (try <code>?hv=2</code> or
+          <code>?hv=3</code>). The controls below drive
+          <code>setVersion()</code> and the dev-only <code>__setOverride()</code>
+          so you can preview any host without leaving the browser.
+        </p>
+
+        <div class="row">
+          <label for="host-platform">platform override</label>
+          <select id="host-platform" class="input-num" style="width: 120px">
+            <option value="">(detected)</option>
+            <option value="android">android</option>
+            <option value="ios">ios</option>
+            <option value="iframe">iframe</option>
+            <option value="web">web</option>
+          </select>
+          <label for="host-version">version</label>
+          <input
+            id="host-version"
+            type="text"
+            class="input-num"
+            style="width: 90px"
+            placeholder="e.g. 9.2"
+            spellcheck="false"
+          />
+          <button id="host-apply" class="btn btn-primary" type="button">
+            Apply
+          </button>
+          <button id="host-reset" class="btn" type="button">Reset</button>
+        </div>
+
+        <div class="badges" style="margin-top: 12px">
+          <span id="host-info" class="badge">resolving…</span>
+          <span id="cap-nativeShare" class="badge">nativeShare: …</span>
+          <span id="cap-betaBanner" class="badge">betaBanner: …</span>
+          <span id="var-saveFlow" class="badge">saveFlow: …</span>
+        </div>
+
+        <button id="share-btn" class="btn btn-primary" type="button">
+          Native share
+        </button>
+        <div id="save-flow" class="result">Save button routes to: …</div>
+      </section>
+
+      <section class="panel panel-wide">
         <div class="row space-between">
           <h2>Message log</h2>
           <button id="clear-log" class="btn" type="button">Clear</button>

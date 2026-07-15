@@ -6,7 +6,12 @@
  * (the bridge receives its own HANDSHAKE, acks it, and marks itself ready)
  * and locally registered handlers receive everything we send.
  */
-import { createBridge } from "nbridge";
+import {
+  type BridgePlatform,
+  createBridge,
+  defineHostRules,
+  versionFromQuery,
+} from "nbridge";
 import "./style.css";
 
 // ── Bridge ───────────────────────────────────────────────────────────────────
@@ -190,4 +195,113 @@ squareBtn.addEventListener("click", async () => {
   } finally {
     squareBtn.disabled = false;
   }
+});
+
+// ── Host Rules demo ──────────────────────────────────────────────────────────
+// defineHostRules() compiles a per-app config into capability/variant resolvers
+// keyed on (platform, version). It is independent of the bridge above. The
+// version comes from `?hv=<n>` (versionFromQuery, the zero-config default); this
+// playground runs on the web platform, so a couple of rules key on `web`
+// version to make the query param visibly change the resolved state:
+//
+//   (no ?hv)   betaBanner: off   saveFlow: A
+//   ?hv=2      betaBanner: on    saveFlow: A
+//   ?hv=3      betaBanner: on    saveFlow: C
+
+// A demo-owned storage key so "Reset" can fully clear the persisted version
+// (versionFromQuery caches the last `?hv` in sessionStorage; without clearing
+// it, Reset would re-read the stale value and appear to do nothing).
+const HOST_VERSION_STORAGE_KEY = "nbridge:playground-hv";
+
+const host = defineHostRules({
+  version: versionFromQuery("hv", { storageKey: HOST_VERSION_STORAGE_KEY }),
+  capabilities: {
+    nativeShare: { android: ">=8.2", ios: true },
+    betaBanner: { web: ">=2", iframe: ">=2" },
+  },
+  variants: {
+    saveFlow: {
+      rules: [
+        { when: { platform: "web", version: ">=3" }, use: "C" },
+        { when: { platform: "ios" }, use: "B" },
+        { when: { platform: "android", version: ">=9" }, use: "B" },
+      ],
+      default: "A",
+    },
+  },
+});
+
+const hostInfoBadge = $("host-info");
+const capNativeShare = $("cap-nativeShare");
+const capBetaBanner = $("cap-betaBanner");
+const varSaveFlow = $("var-saveFlow");
+const shareBtn = $<HTMLButtonElement>("share-btn");
+const saveFlowEl = $("save-flow");
+const platformSelect = $<HTMLSelectElement>("host-platform");
+const versionInput = $<HTMLInputElement>("host-version");
+
+const SAVE_FLOW_ROUTES: Record<string, string> = {
+  A: "/save (default flow A)",
+  B: "/save/native (flow B)",
+  C: "/save/v3 (flow C)",
+};
+
+function setCapBadge(el: HTMLElement, label: string, on: boolean): void {
+  el.textContent = `${label}: ${on}`;
+  el.classList.toggle("badge-ok", on);
+  el.classList.toggle("badge-err", !on);
+}
+
+// Re-render the whole panel from the resolved host state. Registered with
+// host.subscribe below, so setVersion()/__setOverride() refresh it live.
+function renderHost(): void {
+  const info = host.info();
+  hostInfoBadge.textContent = `${info.platform} @ ${info.version ?? "—"}`;
+
+  const nativeShare = host.supports("nativeShare");
+  setCapBadge(capNativeShare, "nativeShare", nativeShare);
+  setCapBadge(capBetaBanner, "betaBanner", host.supports("betaBanner"));
+
+  const saveFlow = host.variant("saveFlow");
+  varSaveFlow.textContent = `saveFlow: ${saveFlow}`;
+
+  // Gate the button on the capability (a copy-link fallback when off).
+  shareBtn.disabled = !nativeShare;
+  shareBtn.textContent = nativeShare
+    ? "Native share"
+    : "Copy link (nativeShare off)";
+
+  saveFlowEl.textContent = `Save button routes to: ${SAVE_FLOW_ROUTES[saveFlow] ?? "unknown"}`;
+}
+
+host.subscribe(renderHost);
+renderHost();
+
+// Dev controls — setVersion() is a production API; __setOverride() is the
+// dev-only escape hatch the DevTools "Host" tab uses in the React playground.
+$<HTMLButtonElement>("host-apply").addEventListener("click", () => {
+  const platform = platformSelect.value as BridgePlatform | "";
+  const version = versionInput.value.trim();
+  if (platform) {
+    // Omit `version` when blank so it falls back to the source (?hv), matching
+    // the React DevTools Host panel's override semantics.
+    host.__setOverride(version ? { platform, version } : { platform });
+  } else {
+    host.__setOverride(null);
+    host.setVersion(version || null);
+  }
+});
+
+$<HTMLButtonElement>("host-reset").addEventListener("click", () => {
+  platformSelect.value = "";
+  versionInput.value = "";
+  host.__setOverride(null);
+  host.setVersion(null);
+  // Clear the persisted `?hv` so Reset truly returns to the detected default.
+  try {
+    window.sessionStorage.removeItem(HOST_VERSION_STORAGE_KEY);
+  } catch {
+    // sessionStorage may be unavailable (private mode / sandboxed iframe).
+  }
+  host.refresh();
 });

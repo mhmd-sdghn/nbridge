@@ -2,7 +2,9 @@
 
 import { useState } from "react";
 import type { BridgeManager } from "../../core/BridgeManager";
+import type { HostRules } from "../../host/types";
 import { EventHistoryPanel } from "../panels/EventHistoryPanel";
+import { HostPanel } from "../panels/HostPanel";
 import { LogsPanel } from "../panels/LogsPanel";
 import { MetricsPanel } from "../panels/MetricsPanel";
 import { SendEventPanel } from "../panels/SendEventPanel";
@@ -11,19 +13,29 @@ import { XIcon } from "./icons";
 interface DevToolsPanelProps {
   // biome-ignore lint/suspicious/noExplicitAny: BridgeManager can have any schema type
   bridge: BridgeManager<any>;
+  // biome-ignore lint/suspicious/noExplicitAny: the panel is agnostic to the app's capability/variant names
+  host?: HostRules<any, any>;
   onClose: () => void;
 }
 
-type TabType = "logs" | "send" | "history" | "metrics";
+type TabType = "logs" | "send" | "history" | "metrics" | "host";
 
-const TABS: Array<{ id: TabType; label: string }> = [
+type Tab = { id: TabType; label: string };
+
+const BASE_TABS: Tab[] = [
   { id: "logs", label: "Logs" },
   { id: "send", label: "Send Event" },
   { id: "history", label: "History" },
   { id: "metrics", label: "Metrics" },
 ];
 
-export function DevToolsPanel({ bridge, onClose }: DevToolsPanelProps) {
+// The Host tab is only offered when a Host Rules engine is provided. Both
+// lists are module constants, so the render just picks one by reference.
+const TABS_WITH_HOST: Tab[] = [...BASE_TABS, { id: "host", label: "Host" }];
+
+export function DevToolsPanel({ bridge, host, onClose }: DevToolsPanelProps) {
+  const tabs = host ? TABS_WITH_HOST : BASE_TABS;
+
   const [activeTab, setActiveTab] = useState<TabType>("logs");
   const platformInfo = bridge.getPlatform();
 
@@ -60,7 +72,7 @@ export function DevToolsPanel({ bridge, onClose }: DevToolsPanelProps) {
 
       {/* Tabs */}
       <div className="flex border-b border-gray-700" role="tablist">
-        {TABS.map((tab) => (
+        {tabs.map((tab) => (
           <button
             key={tab.id}
             type="button"
@@ -87,6 +99,7 @@ export function DevToolsPanel({ bridge, onClose }: DevToolsPanelProps) {
         {activeTab === "send" && <SendEventPanel bridge={bridge} />}
         {activeTab === "history" && <EventHistoryPanel />}
         {activeTab === "metrics" && <MetricsPanel />}
+        {activeTab === "host" && host && <HostPanel host={host} />}
       </div>
     </div>
   );

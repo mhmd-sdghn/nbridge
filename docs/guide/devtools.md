@@ -53,6 +53,21 @@ DevTools are **disabled automatically when `NODE_ENV` is `"production"`** — th
 | **Logs** | Bridge-internal logs, plus mirrored `console.*` output when `logDestination` routes there. |
 | **Metrics** | Live [metrics](/guide/features/metrics), queue stats, and batch stats — when those features are enabled. |
 | **Send** | Hand-craft and send a message. With [schemas](/guide/schemas) registered, message types are listed and each schema's `example` payload is pre-filled. |
+| **Host** | Resolved [Host Rules](/guide/features/host-rules) state — only when a `host` prop is passed (see below). |
+
+## Host Rules tab
+
+Pass a [Host Rules](/guide/features/host-rules) engine as an optional `host` prop to add a **Host** tab:
+
+```tsx
+import { DevToolsUI } from "nbridge/devtools";
+import { instance } from "@/lib/bridge";
+import { host } from "@/lib/host-rules";
+
+<DevToolsUI bridge={instance} host={host} />;
+```
+
+The tab shows the detected platform, raw + parsed version, and every capability/variant with its resolved value. Its override controls let QA preview any `(platform, version)` combination in a desktop browser — the one exception to "detection wins". The prop is optional and the tab is omitted when it's absent, so the `DevToolsUI` API stays backward compatible.
 
 ## Log routing
 

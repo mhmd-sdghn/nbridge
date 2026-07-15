@@ -123,6 +123,17 @@ sendToWeb(
 Always build the `evaluateJavascript` call with proper escaping (`JSONObject.quote` above). Interpolating raw JSON into single quotes breaks on payloads containing quotes or newlines.
 :::
 
+## Passing the host version
+
+[Host Rules](/guide/features/host-rules) vary UI and behavior by app version. The simplest way to tell the web side which version it is running in is to append `?hv=<version>` to the URL you load — the zero-config `versionFromQuery("hv")` source reads it:
+
+```kotlin
+val appVersion = packageManager.getPackageInfo(packageName, 0).versionName
+webView.loadUrl("https://your-app.example.com/?hv=$appVersion")
+```
+
+The version is persisted to `sessionStorage`, so it survives client-side navigation that drops the param. If you'd rather deliver it over the bridge (e.g. via `emit("hostInfo", …)`), call `host.setVersion(version)` when it arrives instead — see [async acquisition](/guide/features/host-rules#async-acquisition-via-setversion).
+
 ## Troubleshooting
 
 - **Web sends, native never receives** — check `javaScriptEnabled = true` and that the `addJavascriptInterface` name exactly matches `androidInterface`. Enable `WebView.setWebContentsDebuggingEnabled(true)` and inspect via `chrome://inspect`.

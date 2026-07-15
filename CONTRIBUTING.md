@@ -21,7 +21,8 @@ nbridge/
 │  │  ├─ types/            # public types, schema.ts, vendored standard-schema.ts
 │  │  ├─ middleware/       # built-in middleware
 │  │  ├─ utils/            # helpers, env guards, platform detection
-│  │  ├─ react/            # nbridge/react entry (createBridgeHooks)
+│  │  ├─ host/             # host rules engine — capability/variant resolution per (platform, version)
+│  │  ├─ react/            # nbridge/react entry (createBridgeHooks, createHostHooks)
 │  │  ├─ next/             # nbridge/next entry (back-navigation, needs optional `next` peer)
 │  │  └─ devtools/         # nbridge/devtools entry (panel UI + styles.source.css)
 │  ├─ test/                # vitest suites (jsdom)
@@ -88,6 +89,13 @@ pnpm docs:build    # must pass before a docs PR — also catches dead links
   (`src/types/standard-schema.ts`) is the ONLY validation contract. zod,
   valibot, and ArkType satisfy it natively; nBridge itself depends on none
   of them.
+- **Host Rules** (`src/host/`) is a standalone engine — it does NOT touch
+  `BridgeManager`. `defineHostRules()` compiles a per-app config into
+  capability/variant resolvers keyed on `(platform, version)`. It reuses
+  `utils/platform.ts` for detection, resolves synchronously (lazily on first
+  access, cached), and validates version constraints at define time (fail
+  fast at boot). The React bindings (`createHostHooks`) and devtools `HostPanel`
+  are thin layers over the same engine instance.
 
 ## Project rules (the non-negotiables)
 
@@ -138,6 +146,10 @@ pnpm --filter nbridge test:watch           # watch mode
 - `test/core-messaging.test.ts` — send/receive/respond, correlation, handshake, readiness
 - `test/features-wiring.test.ts` — proves each feature works through the REAL pipeline
 - `test/schema-validation.test.ts` — validator-agnosticism (runs zod AND valibot)
+- `test/host-version.test.ts` — version parser + constraint comparator
+- `test/host-rules.test.ts` — engine resolution (capabilities, variants,
+  version sources, `setVersion`/`refresh`/`__setOverride`, SSR)
+- `test/host-react.test.tsx` — `createHostHooks` hooks and gate components
 - `test/helpers.ts` — `installAndroidBridge()` (fake native host) and
   `receiveFromNative()` — use these instead of inventing new mocks.
 

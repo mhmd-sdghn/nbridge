@@ -18,6 +18,31 @@ export { PROTOCOL } from "./constants/protocol";
 // Core exports
 export { BridgeManager, createBridge, getBridge } from "./core/BridgeManager";
 export { BridgeValidationError, formatIssues } from "./core/validate";
+// Host Rules exports
+export { defineHostRules } from "./host/HostRulesEngine";
+export {
+  type HostVersionSource,
+  type VersionFromQueryOptions,
+  versionFromQuery,
+  versionFromUserAgent,
+} from "./host/sources";
+export type {
+  CapabilityName,
+  CapabilityRule,
+  HostInfo,
+  HostOverride,
+  HostPlatformConfig,
+  HostRules,
+  HostRulesConfig,
+  HostServerSnapshot,
+  PlatformSelect,
+  VariantDef,
+  VariantName,
+  VariantRule,
+  VariantValue,
+  VariantWhen,
+  VersionConstraint,
+} from "./host/types";
 // Middleware exports
 export {
   debugMiddleware,

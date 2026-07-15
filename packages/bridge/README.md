@@ -48,7 +48,44 @@ const user = await bridge.sendWithResponse("getUser", { id: "1" });
 - **Middleware** in both directions, opt-in **batching** and **deflate
   compression**, an **offline queue** with priorities and reconnect replay,
   and live **metrics**.
+- **Host Rules** — a local, deterministic engine that maps `(platform, version)`
+  to named capabilities and variants, so per-host UI logic lives in one config
+  file instead of scattered `if (platform === …)` checks.
 - ESM-only, side-effect-free tree-shakeable core.
+
+## Host Rules
+
+Vary UI and behavior per host platform *and* version from one config file:
+
+```ts
+// src/lib/host-rules.ts
+import { defineHostRules, versionFromQuery } from "nbridge";
+
+export const host = defineHostRules({
+  version: versionFromQuery("hv"), // host appends ?hv=<version> to the URL
+  capabilities: { nativeShare: { android: ">=8.2", ios: true } },
+  variants: {
+    saveFlow: {
+      rules: [{ when: { platform: "ios" }, use: "B" }],
+      default: "A",
+    },
+  },
+});
+
+host.supports("nativeShare"); // boolean — typo in the name is a compile error
+host.variant("saveFlow");     // "A" | "B"
+```
+
+```tsx
+import { createHostHooks } from "nbridge/react";
+export const { CapabilityGate } = createHostHooks(host);
+
+<CapabilityGate capability="nativeShare" fallback={<CopyLink />}>
+  <NativeShareButton />
+</CapabilityGate>;
+```
+
+Full guide: [Host Rules](https://mhmd-sdghn.github.io/nbridge/guide/features/host-rules).
 
 Full documentation: [mhmd-sdghn.github.io/nbridge](https://mhmd-sdghn.github.io/nbridge)
 

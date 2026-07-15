@@ -52,6 +52,7 @@ export default defineConfig({
             { text: "Compression", link: "/guide/features/compression" },
             { text: "Offline Queue", link: "/guide/features/offline-queue" },
             { text: "Metrics", link: "/guide/features/metrics" },
+            { text: "Host Rules", link: "/guide/features/host-rules" },
           ],
         },
         {
@@ -78,6 +79,7 @@ export default defineConfig({
           items: [
             { text: "Bridge Config", link: "/reference/bridge-config" },
             { text: "BridgeManager", link: "/reference/bridge-manager" },
+            { text: "Host Rules", link: "/reference/host-rules" },
             { text: "Wire Protocol", link: "/reference/protocol" },
           ],
         },
