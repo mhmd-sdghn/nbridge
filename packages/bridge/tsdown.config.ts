@@ -10,7 +10,9 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   platform: "browser",
-  external: ["react", "react-dom", "react/jsx-runtime", "next/navigation"],
+  deps: {
+    neverBundle: ["react", "react-dom", "react/jsx-runtime", "next/navigation"],
+  },
   clean: true,
   // Rebuild the precompiled devtools stylesheet after every (re)build so
   // watch mode keeps dist/devtools/styles.css in place — `clean: true`
