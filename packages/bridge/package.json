@@ -1,6 +1,6 @@
 {
   "name": "nbridge",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "Type-safe real-time bridge between web apps and native Android/iOS WebViews or iframes. Bring-your-own-validator via Standard Schema.",
   "type": "module",
   "license": "MIT",
