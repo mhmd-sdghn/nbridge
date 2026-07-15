@@ -7,6 +7,8 @@ import type {
   CapabilityRule,
   HostInfo,
   HostRules,
+  TraitName,
+  TraitsConfig,
   VariantDef,
   VariantName,
   VariantValue,
@@ -58,8 +60,10 @@ export interface VariantSwitchProps<K extends string, Value extends string> {
 export function createHostHooks<
   TCaps extends Record<string, CapabilityRule>,
   TVariants extends Record<string, VariantDef>,
->(host: HostRules<TCaps, TVariants>) {
+  TTraits extends TraitsConfig = TraitsConfig,
+>(host: HostRules<TCaps, TVariants, TTraits>) {
   type Cap = CapabilityName<TCaps>;
+  type Trait = TraitName<TTraits>;
 
   /** The resolved host state, reactive to re-resolution. */
   function useHostInfo(): HostInfo {
@@ -88,6 +92,15 @@ export function createHostHooks<
       () => host.variant(name),
       () =>
         host.__serverSnapshot().variants[name] as VariantValue<TVariants[K]>,
+    );
+  }
+
+  /** The resolved value of a trait (or `null` when unknown), reactive. */
+  function useTrait(name: Trait): string | null {
+    return useSyncExternalStore(
+      host.subscribe,
+      () => host.info().traits[name] ?? null,
+      () => host.__serverSnapshot().info.traits[name] ?? null,
     );
   }
 
@@ -124,6 +137,7 @@ export function createHostHooks<
     useHostInfo,
     useCapability,
     useVariant,
+    useTrait,
     CapabilityGate,
     PlatformOnly,
     VariantSwitch,

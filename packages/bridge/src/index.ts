@@ -21,7 +21,10 @@ export { BridgeValidationError, formatIssues } from "./core/validate";
 // Host Rules exports
 export { defineHostRules } from "./host/HostRulesEngine";
 export {
+  type HostTraitSource,
   type HostVersionSource,
+  type TraitFromQueryOptions,
+  traitFromQuery,
   type VersionFromQueryOptions,
   versionFromQuery,
   versionFromUserAgent,
@@ -29,6 +32,7 @@ export {
 export type {
   CapabilityName,
   CapabilityRule,
+  CapabilityWhen,
   HostInfo,
   HostOverride,
   HostPlatformConfig,
@@ -36,6 +40,11 @@ export type {
   HostRulesConfig,
   HostServerSnapshot,
   PlatformSelect,
+  TraitDef,
+  TraitMatch,
+  TraitName,
+  TraitsConfig,
+  TraitValue,
   VariantDef,
   VariantName,
   VariantRule,

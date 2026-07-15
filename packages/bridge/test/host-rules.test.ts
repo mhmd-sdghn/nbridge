@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   defineHostRules,
+  traitFromQuery,
   versionFromQuery,
   versionFromUserAgent,
 } from "../src";
@@ -317,5 +318,189 @@ describe("__serverSnapshot (hydration consistency)", () => {
   it("returns a stable identity (no getSnapshot loop)", () => {
     const host = defineHostRules({ capabilities: { x: { web: true } } });
     expect(host.__serverSnapshot()).toBe(host.__serverSnapshot());
+  });
+});
+
+describe("traits", () => {
+  it("selects a variant by trait value, including one-of arrays", () => {
+    const host = defineHostRules({
+      traits: { mk: () => null },
+      variants: {
+        channel: {
+          rules: [
+            { when: { traits: { mk: "google" } }, use: "G" },
+            { when: { traits: { mk: ["bing", "duck"] } }, use: "B" },
+          ],
+          default: "D",
+        },
+      },
+    });
+
+    expect(host.variant("channel")).toBe("D"); // unknown mk -> default
+    host.setTrait("mk", "google");
+    expect(host.variant("channel")).toBe("G");
+    host.setTrait("mk", "duck");
+    expect(host.variant("channel")).toBe("B"); // one-of
+    host.setTrait("mk", "other");
+    expect(host.variant("channel")).toBe("D"); // no rule matches
+  });
+
+  it("gates a capability with a `when` clause (ANDed on top of platform)", () => {
+    const host = defineHostRules({
+      traits: { mk: () => null },
+      capabilities: {
+        promo: { web: true, when: { traits: { mk: "google" } } },
+      },
+    });
+
+    // Default platform is web, but the trait gate fails while mk is unknown.
+    expect(host.supports("promo")).toBe(false);
+    host.setTrait("mk", "google");
+    expect(host.supports("promo")).toBe(true);
+    host.setTrait("mk", "bing");
+    expect(host.supports("promo")).toBe(false);
+  });
+
+  it("a `when` gate never enables an unlisted platform", () => {
+    const host = defineHostRules({
+      traits: { mk: () => null },
+      capabilities: {
+        promo: { web: true, when: { traits: { mk: "google" } } },
+      },
+    });
+    // android is not listed; the matching trait cannot turn it on.
+    host.__setOverride({ platform: "android", traits: { mk: "google" } });
+    expect(host.supports("promo")).toBe(false);
+  });
+
+  it("combines platform and trait conditions with AND", () => {
+    const host = defineHostRules({
+      traits: { mk: () => null },
+      variants: {
+        f: {
+          rules: [
+            { when: { platform: "ios", traits: { mk: "google" } }, use: "X" },
+          ],
+          default: "D",
+        },
+      },
+    });
+
+    host.__setOverride({ platform: "ios", traits: { mk: "google" } });
+    expect(host.variant("f")).toBe("X");
+    host.__setOverride({ platform: "ios", traits: { mk: "bing" } });
+    expect(host.variant("f")).toBe("D"); // trait mismatch
+    host.__setOverride({ platform: "web", traits: { mk: "google" } });
+    expect(host.variant("f")).toBe("D"); // platform mismatch
+  });
+
+  it("setTrait persists across refresh; null clears back to the source", () => {
+    let source = "a";
+    const host = defineHostRules({ traits: { mk: () => source } });
+    host.setTrait("mk", "b");
+    source = "c";
+    host.refresh();
+    expect(host.info().traits.mk).toBe("b"); // explicit beats source
+    host.setTrait("mk", null);
+    host.refresh();
+    expect(host.info().traits.mk).toBe("c"); // fell back to source
+  });
+
+  it("setTrait re-resolves and notifies subscribers", () => {
+    const host = defineHostRules({ traits: { mk: () => null } });
+    const listener = vi.fn();
+    host.subscribe(listener);
+    host.setTrait("mk", "x");
+    expect(listener).toHaveBeenCalledTimes(1);
+    expect(host.info().traits.mk).toBe("x");
+  });
+
+  it("a rule with only `traits` is valid (no empty-when throw)", () => {
+    expect(() =>
+      defineHostRules({
+        traits: { mk: () => null },
+        variants: {
+          channel: {
+            rules: [{ when: { traits: { mk: "g" } }, use: "G" }],
+            default: "D",
+          },
+        },
+      }),
+    ).not.toThrow();
+  });
+
+  it("traitFromQuery reads the param and persists to sessionStorage", () => {
+    window.history.replaceState(null, "", "?mk=google");
+    const host = defineHostRules({ traits: { mk: traitFromQuery("mk") } });
+    expect(host.info().traits.mk).toBe("google");
+    expect(window.sessionStorage.getItem("nbridge:trait:mk")).toBe("google");
+  });
+
+  it("traitFromQuery falls back to storage; { persist: false } does not", () => {
+    window.sessionStorage.setItem("nbridge:trait:mk", "bing");
+    window.history.replaceState(null, "", "/");
+    expect(
+      defineHostRules({ traits: { mk: traitFromQuery("mk") } }).info().traits
+        .mk,
+    ).toBe("bing");
+    expect(
+      defineHostRules({
+        traits: { mk: traitFromQuery("mk", { persist: false }) },
+      }).info().traits.mk,
+    ).toBeNull();
+  });
+
+  it("__introspect reports traits with any declared values", () => {
+    const host = defineHostRules({
+      traits: {
+        mk: { source: () => null, values: ["google", "bing"] as const },
+        tenant: () => null,
+      },
+    });
+    expect(host.__introspect().traits).toEqual([
+      { name: "mk", values: ["google", "bing"] },
+      { name: "tenant", values: undefined },
+    ]);
+  });
+
+  it("traits are unknown on the server, so trait-gated rules are conservative", () => {
+    vi.stubGlobal("window", undefined);
+    const host = defineHostRules({
+      traits: { mk: () => "google" },
+      capabilities: {
+        promo: { web: true, when: { traits: { mk: "google" } } },
+      },
+      variants: {
+        channel: {
+          rules: [{ when: { traits: { mk: "google" } }, use: "G" }],
+          default: "D",
+        },
+      },
+    });
+    expect(host.info().traits.mk).toBeNull();
+    expect(host.supports("promo")).toBe(false);
+    expect(host.variant("channel")).toBe("D");
+  });
+
+  it("__serverSnapshot ignores client trait values", () => {
+    const host = defineHostRules({
+      traits: { mk: () => null },
+      capabilities: {
+        promo: { web: true, when: { traits: { mk: "google" } } },
+      },
+      variants: {
+        channel: {
+          rules: [{ when: { traits: { mk: "google" } }, use: "G" }],
+          default: "D",
+        },
+      },
+    });
+    host.setTrait("mk", "google");
+    expect(host.supports("promo")).toBe(true);
+
+    const snap = host.__serverSnapshot();
+    expect(snap.supports.promo).toBe(false);
+    expect(snap.variants.channel).toBe("D");
+    expect(snap.info.traits.mk).toBeNull();
   });
 });

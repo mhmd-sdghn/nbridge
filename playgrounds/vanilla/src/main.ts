@@ -10,6 +10,7 @@ import {
   type BridgePlatform,
   createBridge,
   defineHostRules,
+  traitFromQuery,
   versionFromQuery,
 } from "nbridge";
 import "./style.css";
@@ -199,30 +200,41 @@ squareBtn.addEventListener("click", async () => {
 
 // ── Host Rules demo ──────────────────────────────────────────────────────────
 // defineHostRules() compiles a per-app config into capability/variant resolvers
-// keyed on (platform, version). It is independent of the bridge above. The
-// version comes from `?hv=<n>` (versionFromQuery, the zero-config default); this
-// playground runs on the web platform, so a couple of rules key on `web`
-// version to make the query param visibly change the resolved state:
+// keyed on (platform, version) plus arbitrary traits. It is independent of the
+// bridge above. The version comes from `?hv=<n>` and a `mk` trait from
+// `?mk=<channel>`; this playground runs on the web platform, so rules key on
+// `web` version and the trait to make the query params visibly change state:
 //
-//   (no ?hv)   betaBanner: off   saveFlow: A
-//   ?hv=2      betaBanner: on    saveFlow: A
-//   ?hv=3      betaBanner: on    saveFlow: C
+//   (no ?hv)     betaBanner: off   saveFlow: A
+//   ?hv=2        betaBanner: on    saveFlow: A
+//   ?hv=3        betaBanner: on    saveFlow: C
+//   ?mk=google   promoBanner: on
+//   ?mk=bing     saveFlow: B
 
-// A demo-owned storage key so "Reset" can fully clear the persisted version
-// (versionFromQuery caches the last `?hv` in sessionStorage; without clearing
-// it, Reset would re-read the stale value and appear to do nothing).
+// Demo-owned storage keys so "Reset" can fully clear the persisted values
+// (versionFromQuery/traitFromQuery cache the last param in sessionStorage;
+// without clearing, Reset would re-read the stale value and appear to do nothing).
 const HOST_VERSION_STORAGE_KEY = "nbridge:playground-hv";
+const HOST_MK_STORAGE_KEY = "nbridge:playground-mk";
 
 const host = defineHostRules({
   version: versionFromQuery("hv", { storageKey: HOST_VERSION_STORAGE_KEY }),
+  traits: {
+    mk: {
+      source: traitFromQuery("mk", { storageKey: HOST_MK_STORAGE_KEY }),
+      values: ["google", "bing"] as const,
+    },
+  },
   capabilities: {
     nativeShare: { android: ">=8.2", ios: true },
     betaBanner: { web: ">=2", iframe: ">=2" },
+    promoBanner: { web: true, when: { traits: { mk: "google" } } },
   },
   variants: {
     saveFlow: {
       rules: [
         { when: { platform: "web", version: ">=3" }, use: "C" },
+        { when: { traits: { mk: "bing" } }, use: "B" },
         { when: { platform: "ios" }, use: "B" },
         { when: { platform: "android", version: ">=9" }, use: "B" },
       ],
@@ -234,11 +246,14 @@ const host = defineHostRules({
 const hostInfoBadge = $("host-info");
 const capNativeShare = $("cap-nativeShare");
 const capBetaBanner = $("cap-betaBanner");
+const capPromoBanner = $("cap-promoBanner");
 const varSaveFlow = $("var-saveFlow");
+const traitMk = $("trait-mk");
 const shareBtn = $<HTMLButtonElement>("share-btn");
 const saveFlowEl = $("save-flow");
 const platformSelect = $<HTMLSelectElement>("host-platform");
 const versionInput = $<HTMLInputElement>("host-version");
+const mkInput = $<HTMLInputElement>("host-mk");
 
 const SAVE_FLOW_ROUTES: Record<string, string> = {
   A: "/save (default flow A)",
@@ -256,11 +271,14 @@ function setCapBadge(el: HTMLElement, label: string, on: boolean): void {
 // host.subscribe below, so setVersion()/__setOverride() refresh it live.
 function renderHost(): void {
   const info = host.info();
-  hostInfoBadge.textContent = `${info.platform} @ ${info.version ?? "—"}`;
+  hostInfoBadge.textContent = `${info.platform} @ ${info.version ?? "none"}`;
 
   const nativeShare = host.supports("nativeShare");
   setCapBadge(capNativeShare, "nativeShare", nativeShare);
   setCapBadge(capBetaBanner, "betaBanner", host.supports("betaBanner"));
+  setCapBadge(capPromoBanner, "promoBanner", host.supports("promoBanner"));
+
+  traitMk.textContent = `mk: ${info.traits.mk ?? "none"}`;
 
   const saveFlow = host.variant("saveFlow");
   varSaveFlow.textContent = `saveFlow: ${saveFlow}`;
@@ -282,24 +300,33 @@ renderHost();
 $<HTMLButtonElement>("host-apply").addEventListener("click", () => {
   const platform = platformSelect.value as BridgePlatform | "";
   const version = versionInput.value.trim();
+  const mk = mkInput.value.trim();
   if (platform) {
-    // Omit `version` when blank so it falls back to the source (?hv), matching
+    // Omit blank fields so they fall back to their source (?hv / ?mk), matching
     // the React DevTools Host panel's override semantics.
-    host.__setOverride(version ? { platform, version } : { platform });
+    host.__setOverride({
+      platform,
+      ...(version ? { version } : {}),
+      ...(mk ? { traits: { mk } } : {}),
+    });
   } else {
     host.__setOverride(null);
     host.setVersion(version || null);
+    host.setTrait("mk", mk || null);
   }
 });
 
 $<HTMLButtonElement>("host-reset").addEventListener("click", () => {
   platformSelect.value = "";
   versionInput.value = "";
+  mkInput.value = "";
   host.__setOverride(null);
   host.setVersion(null);
-  // Clear the persisted `?hv` so Reset truly returns to the detected default.
+  host.setTrait("mk", null);
+  // Clear the persisted `?hv` / `?mk` so Reset truly returns to the default.
   try {
     window.sessionStorage.removeItem(HOST_VERSION_STORAGE_KEY);
+    window.sessionStorage.removeItem(HOST_MK_STORAGE_KEY);
   } catch {
     // sessionStorage may be unavailable (private mode / sandboxed iframe).
   }
