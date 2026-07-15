@@ -151,6 +151,19 @@ sendToWeb([
 `contentController.add(_:name:)` retains its handler, and the handler typically references the web view — keep the `webView` reference `weak` (as above), and call `removeScriptMessageHandler(forName:)` in teardown for long-lived controllers.
 :::
 
+## Passing the host version
+
+[Host Rules](/guide/features/host-rules) vary UI and behavior by app version. The simplest way to tell the web side which version it is running in is to append `?hv=<version>` to the URL you load — the zero-config `versionFromQuery("hv")` source reads it:
+
+```swift
+let appVersion = Bundle.main
+    .infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+let url = URL(string: "https://your-app.example.com/?hv=\(appVersion)")!
+webView.load(URLRequest(url: url))
+```
+
+The version is persisted to `sessionStorage`, so it survives client-side navigation that drops the param. If you'd rather deliver it over the bridge (e.g. via `emit("hostInfo", …)`), call `host.setVersion(version)` when it arrives instead — see [async acquisition](/guide/features/host-rules#async-acquisition-via-setversion).
+
 ## Troubleshooting
 
 - **Web sends, native never receives** — the handler name in `contentController.add` must exactly match `iosHandler`; also confirm the handler object is still alive (not deallocated).

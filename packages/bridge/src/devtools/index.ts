@@ -15,6 +15,7 @@ export { DevToolsPanel } from "./components/DevToolsPanel";
 export { DevToolsTrigger } from "./components/DevToolsTrigger";
 export { DevToolsUI } from "./components/DevToolsUI";
 export { EventHistoryPanel } from "./panels/EventHistoryPanel";
+export { HostPanel } from "./panels/HostPanel";
 export { LogsPanel } from "./panels/LogsPanel";
 export { MetricsPanel } from "./panels/MetricsPanel";
 export { SendEventPanel } from "./panels/SendEventPanel";

@@ -113,6 +113,20 @@ If the parent page also uses nBridge for other transports, note that the *parent
 - Cross-origin iframes (where reading `window.top` throws) are detected correctly.
 - Same-page communication for local development is a different mode — see [Plain Web](/guide/platforms/web).
 
+## Passing the host version
+
+[Host Rules](/guide/features/host-rules) vary UI and behavior by host version. The embedding page appends `?hv=<version>` to the iframe `src` — the zero-config `versionFromQuery("hv")` source reads it:
+
+```ts
+iframe.src = `https://app.example.com/?hv=${encodeURIComponent(hostVersion)}`;
+```
+
+The version is persisted to `sessionStorage`, so it survives client-side navigation that drops the param. If you'd rather deliver it via `postMessage` after load, call `host.setVersion(version)` when it arrives instead — see [async acquisition](/guide/features/host-rules#async-acquisition-via-setversion).
+
+::: warning The embedder controls the URL
+An iframe embedder fully controls the `src` and can send any `?hv=` value it likes — including a fake one. Host Rules is **UX policy, not access control**: use it to gate what the UI shows, and enforce what a user is allowed to do on the server. Never treat a capability check as an authorization boundary. See the [security note](/guide/features/host-rules#security-posture-ux-policy-not-access-control).
+:::
+
 ## Troubleshooting
 
 - **Child never becomes ready** — the parent is not answering `__nbridge_handshake__`; add case 2 above.

@@ -9,3 +9,9 @@ export {
   type CreateBridgeHooksOptions,
   createBridgeHooks,
 } from "./createBridgeHooks";
+export {
+  type CapabilityGateProps,
+  createHostHooks,
+  type PlatformOnlyProps,
+  type VariantSwitchProps,
+} from "./createHostHooks";

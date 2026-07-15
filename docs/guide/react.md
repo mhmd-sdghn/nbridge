@@ -56,6 +56,10 @@ The `instance` escape hatch is a full [`BridgeManager`](/reference/bridge-manage
 instance.on("error", (payload) => instance.error(payload));
 ```
 
+::: tip Host Rules hooks
+Varying UI by host platform/version is a separate concern from messaging. `nbridge/react` also ships `createHostHooks(host)` — `useCapability`, `useVariant`, `CapabilityGate`, `PlatformOnly`, `VariantSwitch` — bound to a [Host Rules](/guide/features/host-rules) engine rather than a bridge instance. It is its own factory; don't bolt it onto `createBridgeHooks`.
+:::
+
 ## Sending
 
 ### `useBridgeSend`
