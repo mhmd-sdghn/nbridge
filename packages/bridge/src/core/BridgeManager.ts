@@ -1,3 +1,4 @@
+import { MessagePriority } from "../constants/messagePriority";
 import { isProtocolType, PROTOCOL } from "../constants/protocol";
 import type {
   BatchStats,
@@ -16,7 +17,6 @@ import type {
   PlatformInfo,
   QueueStats,
 } from "../types";
-import { MessagePriority } from "../types";
 import type {
   MessageTypes,
   PayloadFor,
@@ -598,12 +598,7 @@ export class BridgeManager<
   }
 
   private enqueue(message: BridgeMessage, options?: BridgeSendOptions): void {
-    const priority =
-      options?.priority === "HIGH"
-        ? MessagePriority.HIGH
-        : options?.priority === "LOW"
-          ? MessagePriority.LOW
-          : MessagePriority.NORMAL;
+    const priority = MessagePriority[options?.priority ?? "NORMAL"];
     this.messageQueue?.enqueue(message, options, priority);
   }
 

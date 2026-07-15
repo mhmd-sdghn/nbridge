@@ -2,6 +2,7 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
+import { BridgeBackAction } from "../constants/backAction";
 import type { IBridgeManager } from "../types";
 import {
   ensureSessionHistoryTracking,
@@ -9,7 +10,6 @@ import {
   syncCurrentUrlIntoSession,
 } from "./navigation/nextHistorySession";
 import {
-  BridgeBackAction,
   type BridgeBackNavigationOptions,
   canNavigateBack,
   resolveNavigationMode,
@@ -119,5 +119,5 @@ export function createBridgeBackNavigation(
     };
   }
 
-  return { useBridgeBack, BridgeBackAction };
+  return { useBridgeBack };
 }

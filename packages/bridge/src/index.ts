@@ -8,6 +8,8 @@
  */
 
 // Constants exports
+export { BridgeBackAction } from "./constants/backAction";
+export { MessagePriority } from "./constants/messagePriority";
 export {
   BridgeMessageType,
   type BridgeMessageTypeValue,
@@ -58,7 +60,6 @@ export type {
   QueuedMessage,
   QueueStats,
 } from "./types";
-export { MessagePriority } from "./types";
 // Schema type exports (Standard Schema based — bring your own validator)
 export {
   defineMessage,

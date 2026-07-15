@@ -1,3 +1,4 @@
+import type { MessagePriority } from "../constants/messagePriority";
 import type {
   MessageTypes,
   PayloadFor,
@@ -275,15 +276,6 @@ export interface IBridgeManager {
 export interface MiddlewareConfig {
   /** Enable middleware system (default: true) */
   enabled: boolean;
-}
-
-/**
- * Message priority levels
- */
-export enum MessagePriority {
-  HIGH = 0,
-  NORMAL = 1,
-  LOW = 2,
 }
 
 /**

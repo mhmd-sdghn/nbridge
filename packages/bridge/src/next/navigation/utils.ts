@@ -6,11 +6,6 @@ import {
   syncCurrentUrlIntoSession,
 } from "./nextHistorySession";
 
-export enum BridgeBackAction {
-  RouterBack = "router-back",
-  AppShutdown = "app-shutdown",
-}
-
 export type BridgeNavigationMode = "session" | "browser";
 
 export interface BridgeBackNavigationOptions {

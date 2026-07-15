@@ -1,19 +1,25 @@
+import { MessagePriority } from "../constants/messagePriority";
 import type {
   BridgeMessage,
   BridgeSendOptions,
-  MessagePriority,
   QueueConfig,
   QueuedMessage,
   QueueStats,
 } from "../types";
-import { MessagePriority as Priority } from "../types";
 import type { BridgeLogger } from "../utils/helpers";
+
+// Storage written by older versions keyed queues by numeric enum values.
+const LEGACY_PRIORITY_KEYS: Record<string, MessagePriority> = {
+  "0": MessagePriority.HIGH,
+  "1": MessagePriority.NORMAL,
+  "2": MessagePriority.LOW,
+};
 
 export class MessageQueue {
   private queue: Map<MessagePriority, QueuedMessage[]> = new Map([
-    [Priority.HIGH, []],
-    [Priority.NORMAL, []],
-    [Priority.LOW, []],
+    [MessagePriority.HIGH, []],
+    [MessagePriority.NORMAL, []],
+    [MessagePriority.LOW, []],
   ]);
   private flushing = false;
   private flushCallback?: () => Promise<void>;
@@ -36,7 +42,7 @@ export class MessageQueue {
   public enqueue(
     message: BridgeMessage,
     options?: BridgeSendOptions,
-    priority: MessagePriority = Priority.NORMAL,
+    priority: MessagePriority = MessagePriority.NORMAL,
   ): boolean {
     if (!this.config.enabled) {
       return false;
@@ -68,7 +74,7 @@ export class MessageQueue {
     this.stats.pending++;
 
     this.logger.log(
-      `Queued message: ${message.type} with priority ${this.getPriorityName(priority)} (queue size: ${this.stats.size})`,
+      `Queued message: ${message.type} with priority ${priority} (queue size: ${this.stats.size})`,
     );
 
     if (this.config.persist) {
@@ -86,22 +92,13 @@ export class MessageQueue {
     return total;
   }
 
-  private getPriorityName(priority: MessagePriority): string {
-    switch (priority) {
-      case Priority.HIGH:
-        return "HIGH";
-      case Priority.NORMAL:
-        return "NORMAL";
-      case Priority.LOW:
-        return "LOW";
-      default:
-        return "UNKNOWN";
-    }
-  }
-
   public dequeue(): QueuedMessage | null {
     // Dequeue from highest priority first
-    for (const priority of [Priority.HIGH, Priority.NORMAL, Priority.LOW]) {
+    for (const priority of [
+      MessagePriority.HIGH,
+      MessagePriority.NORMAL,
+      MessagePriority.LOW,
+    ]) {
       const priorityQueue = this.queue.get(priority);
       if (priorityQueue && priorityQueue.length > 0) {
         const message = priorityQueue.shift();
@@ -116,7 +113,11 @@ export class MessageQueue {
 
   public peek(): QueuedMessage | null {
     // Peek from highest priority first
-    for (const priority of [Priority.HIGH, Priority.NORMAL, Priority.LOW]) {
+    for (const priority of [
+      MessagePriority.HIGH,
+      MessagePriority.NORMAL,
+      MessagePriority.LOW,
+    ]) {
       const priorityQueue = this.queue.get(priority);
       if (priorityQueue && priorityQueue.length > 0) {
         return priorityQueue[0] ?? null;
@@ -147,7 +148,11 @@ export class MessageQueue {
 
     // Collect all messages from all priorities
     const messagesToFlush: QueuedMessage[] = [];
-    for (const priority of [Priority.HIGH, Priority.NORMAL, Priority.LOW]) {
+    for (const priority of [
+      MessagePriority.HIGH,
+      MessagePriority.NORMAL,
+      MessagePriority.LOW,
+    ]) {
       const priorityQueue = this.queue.get(priority);
       if (priorityQueue) {
         messagesToFlush.push(...priorityQueue);
@@ -242,20 +247,19 @@ export class MessageQueue {
         // Load messages into priority queues
         if (data.queueData) {
           // New format with priority queues
-          for (const [priority, messages] of Object.entries(
-            data.queueData,
-          ) as Array<[string, QueuedMessage[]]>) {
-            const priorityNum = Number.parseInt(priority, 10);
-            const priorityQueue = this.queue.get(
-              priorityNum as MessagePriority,
-            );
+          for (const [key, messages] of Object.entries(data.queueData) as Array<
+            [string, QueuedMessage[]]
+          >) {
+            const priority = (LEGACY_PRIORITY_KEYS[key] ??
+              key) as MessagePriority;
+            const priorityQueue = this.queue.get(priority);
             if (priorityQueue) {
-              priorityQueue.push(...messages);
+              priorityQueue.push(...messages.map((m) => ({ ...m, priority })));
             }
           }
         } else if (data.queue) {
           // Old format (single array) - migrate to NORMAL priority
-          const normalQueue = this.queue.get(Priority.NORMAL);
+          const normalQueue = this.queue.get(MessagePriority.NORMAL);
           if (normalQueue) {
             normalQueue.push(...data.queue);
           }
@@ -276,7 +280,7 @@ export class MessageQueue {
 
     try {
       // Convert Map to plain object for serialization
-      const queueData: Record<number, QueuedMessage[]> = {};
+      const queueData: Record<string, QueuedMessage[]> = {};
       for (const [priority, messages] of this.queue.entries()) {
         queueData[priority] = messages;
       }

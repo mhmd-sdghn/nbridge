@@ -3,6 +3,9 @@
 /**
  * nbridge/next — Next.js App Router back-navigation for WebView apps.
  * Requires the optional `next` peer dependency.
+ *
+ * This entry is client-only. Pure values usable in Server Components
+ * (e.g. `BridgeBackAction`) are exported from the root `nbridge` entry.
  */
 export {
   type CreateBridgeBackNavigationOptions,
@@ -21,7 +24,6 @@ export {
 } from "./navigation/nextHistorySession";
 export { useBackIntercept } from "./navigation/useBackIntercept";
 export {
-  BridgeBackAction,
   type BridgeBackNavigationOptions,
   type BridgeNavigationMode,
   canNavigateBack,

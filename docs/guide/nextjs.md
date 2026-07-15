@@ -17,11 +17,25 @@ export const { useBridgeSend, instance } = createBridgeHooks({
   config: { debug: true },
 });
 
-export const { useBridgeBack, BridgeBackAction } = createBridgeBackNavigation(
+export const { useBridgeBack } = createBridgeBackNavigation(
   instance,
   { shutdownEvent: "shutdown" }, // message type sent to close the WebView (default: "shutdown")
 );
 ```
+
+::: tip Server Components
+`BridgeBackAction` is a plain string-constant object exported from the **root
+`nbridge` entry**, not from `nbridge/next`. The framework entries are
+client-only (`"use client"`), so importing values from them in a Server
+Component yields `undefined`. Import it from `nbridge` and it works anywhere —
+Server Components, Client Components, and any future framework entry:
+
+```ts
+import { BridgeBackAction } from "nbridge";
+
+<PageHeader backAction={BridgeBackAction.AppShutdown} />
+```
+:::
 
 When the WebView should close, the bridge sends `{ type: "shutdown", payload: {} }` to the host — the host implements the actual close.
 
@@ -30,7 +44,7 @@ When the WebView should close, the bridge sends `{ type: "shutdown", payload: {}
 ```tsx
 "use client";
 
-import { useBridgeBack, BridgeBackAction } from "@/lib/bridge";
+import { useBridgeBack } from "@/lib/bridge";
 
 export function BackButton() {
   const { routerBackOrShutdown, canRouterBack } = useBridgeBack();
@@ -47,7 +61,7 @@ Returned API:
 
 | Function | Behavior |
 | --- | --- |
-| `routerBackOrShutdown(force?)` | `router.back()` when in-app history exists, otherwise send the shutdown event. Force a branch with `BridgeBackAction.RouterBack` or `BridgeBackAction.AppShutdown`. |
+| `routerBackOrShutdown(force?)` | `router.back()` when in-app history exists, otherwise send the shutdown event. Force a branch with `BridgeBackAction.RouterBack` or `BridgeBackAction.AppShutdown` (imported from `nbridge`). |
 | `canRouterBack()` | `true` when a router back-step is available. |
 | `forceBrowserBackToShutdownApp()` | Arms a one-shot intercept of the browser/hardware back gesture that sends the shutdown event instead of navigating. |
 | `removeForceBrowserBackToShutdownApp()` | Disarms the intercept (also removed automatically on unmount). |

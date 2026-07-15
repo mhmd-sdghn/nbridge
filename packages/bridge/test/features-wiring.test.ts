@@ -217,6 +217,47 @@ describe("offline queue wiring", () => {
     await bridge.flushQueue();
     expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
   });
+
+  it("migrates persisted queues keyed by legacy numeric priorities", async () => {
+    const storageKey = "t3";
+    const legacyEntry = (type: string, priority: number) => ({
+      message: { type, payload: {} },
+      retries: 0,
+      attempts: 0,
+      priority,
+    });
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        queueData: {
+          "0": [legacyEntry("high", 0)],
+          "1": [legacyEntry("normal", 1)],
+          "2": [legacyEntry("low", 2)],
+        },
+        stats: { size: 3, pending: 3, failed: 0, completed: 0 },
+      }),
+    );
+
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: true,
+          storageKey,
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+    cleanup.push(() => localStorage.removeItem(storageKey));
+
+    expect(bridge.getQueueStats()?.size).toBe(3);
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
+  });
 });
 
 describe("metrics wiring", () => {
