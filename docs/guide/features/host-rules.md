@@ -172,19 +172,62 @@ Until that happens the version is `null`, so version-gated features stay off and
 
 `setVersion(v)` beats the configured source and survives `refresh()`. `setVersion(null)` clears it, so the next `refresh()` falls back to the source.
 
-## Unknown version is conservative
+## Traits: matching on other dimensions
 
-If a rule needs a version and the host gave none (or something unparsable), the rule does not match: the capability is denied and the variant rule is skipped, so `default` wins. A capability set to plain `true` (no version needed) still passes. This is deliberate. nBridge never turns on a version-gated feature for a host it cannot confirm.
+Sometimes what varies the UI is neither the platform nor the version. A common case is a URL parameter, for example a marketing channel `?mk=google` vs `?mk=bing`. Declare it as a **trait**: a named string dimension with its own source, then match it in a rule's `when`.
+
+```ts
+export const host = defineHostRules({
+  version: versionFromQuery("hv"),
+
+  traits: {
+    // Declare `values` to type-check them in rules (a typo becomes a compile error).
+    mk: { source: traitFromQuery("mk"), values: ["google", "bing"] as const },
+    // Omit `values` when the set is open-ended: any string is accepted.
+    tenant: traitFromQuery("tenant"),
+  },
+
+  capabilities: {
+    // `when` adds a trait gate on top of the per-platform rule.
+    promoBanner: { web: true, when: { traits: { mk: "google" } } },
+  },
+
+  variants: {
+    saveFlow: {
+      rules: [
+        { when: { traits: { mk: "google" } }, use: "A" },
+        { when: { traits: { mk: ["bing", "duckduckgo"] } }, use: "B" }, // array = one of
+        { when: { platform: "ios", traits: { mk: "google" } }, use: "A" }, // combine with platform/version
+      ],
+      default: "A",
+    },
+  },
+});
+```
+
+Traits behave like the version in the ways that matter:
+
+- **Pluggable source.** `traitFromQuery("mk")` reads `?mk=` and persists it to `sessionStorage` (pass `{ persist: false }` to read only the current URL). A trait source is any `() => string | null`, so it can read from anywhere.
+- **Conservative when unknown.** If the trait is absent, a rule or capability that requires it does not match, so a variant falls back to `default` and a gated capability is off. Traits are unknown during SSR too, so hydration stays consistent.
+- **Async acquisition.** If the value arrives late (for example over the bridge), push it with `host.setTrait("mk", value)`, the trait counterpart of `setVersion`.
+
+A capability's `when` gate only ever removes availability. It is ANDed on top of the per-platform rule, so it never turns a feature on for a platform you did not list.
+
+In React, read a trait reactively with `useTrait("mk")` (returned by `createHostHooks`). Capabilities and variants gated on traits already flow through `useCapability`, `useVariant`, and the gate components.
+
+## Unknown version or trait is conservative
+
+If a rule needs a version and the host gave none (or something unparsable), the rule does not match: the capability is denied and the variant rule is skipped, so `default` wins. A capability set to plain `true` (no version needed) still passes. The same holds for traits: an unknown trait never matches. This is deliberate. nBridge never turns on a gated feature for a host it cannot confirm.
 
 ## Preview any host in DevTools
 
-Pass the engine to the [DevTools](/guide/devtools) panel to get a **Host** tab. It shows the resolved platform, the raw and parsed version, and every capability and variant with its current value:
+Pass the engine to the [DevTools](/guide/devtools) panel to get a **Host** tab. It shows the resolved platform, the raw and parsed version, and every capability, variant, and trait with its current value:
 
 ```tsx
 <DevToolsUI bridge={instance} host={host} />
 ```
 
-The tab's controls let QA preview any `(platform, version)` in a normal desktop browser, the one exception to "detection wins". Under the hood they call `host.__setOverride({ platform, version })`, a dev-only hatch you should never ship in product code.
+The tab's controls let QA preview any platform, version, or trait combination in a normal desktop browser, the one exception to "detection wins". Under the hood they call `host.__setOverride({ platform, version, traits })`, a dev-only hatch you should never ship in product code.
 
 ::: warning Security: this is UX policy, not access control
 Host Rules decides what the UI shows, not what a user is allowed to do. An iframe embedder controls the URL and can fake `?hv=`, and a user agent can be spoofed. Gate presentation with Host Rules, and enforce real permissions on the server, every time. Never treat `host.supports(...)` as an authorization check.

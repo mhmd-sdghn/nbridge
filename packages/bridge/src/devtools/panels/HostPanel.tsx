@@ -27,22 +27,34 @@ export function HostPanel({ host }: HostPanelProps) {
     "",
   );
   const [overrideVersion, setOverrideVersion] = useState("");
+  const [overrideTraits, setOverrideTraits] = useState<Record<string, string>>(
+    {},
+  );
 
   const info = host.info();
-  const { capabilities, variants } = host.__introspect();
+  const { capabilities, variants, traits } = host.__introspect();
 
   const applyOverride = () => {
     const override: HostOverride = {};
     if (overridePlatform) override.platform = overridePlatform;
     if (overrideVersion.trim()) override.version = overrideVersion.trim();
+    const traitOverride: Record<string, string> = {};
+    for (const [name, value] of Object.entries(overrideTraits)) {
+      if (value.trim()) traitOverride[name] = value.trim();
+    }
+    if (Object.keys(traitOverride).length > 0) override.traits = traitOverride;
     host.__setOverride(Object.keys(override).length > 0 ? override : null);
   };
 
   const resetOverride = () => {
     setOverridePlatform("");
     setOverrideVersion("");
+    setOverrideTraits({});
     host.__setOverride(null);
   };
+
+  const setTraitOverride = (name: string, value: string) =>
+    setOverrideTraits((prev) => ({ ...prev, [name]: value }));
 
   return (
     <div className="space-y-6">
@@ -85,6 +97,21 @@ export function HostPanel({ host }: HostPanelProps) {
         )}
       </Section>
 
+      {/* Traits (only when the config declares any) */}
+      {traits.length > 0 && (
+        <Section title="Traits">
+          <ul className="divide-y divide-gray-700">
+            {traits.map(({ name }) => (
+              <Row
+                key={name}
+                name={name}
+                value={info.traits[name] ?? "unknown"}
+              />
+            ))}
+          </ul>
+        </Section>
+      )}
+
       {/* Dev override controls */}
       <div className="space-y-4">
         <h3 className="text-sm font-semibold text-gray-200">
@@ -120,6 +147,47 @@ export function HostPanel({ host }: HostPanelProps) {
               />
             </label>
           </div>
+          {traits.length > 0 && (
+            <div className="grid grid-cols-2 gap-3">
+              {traits.map((trait) => {
+                const id = `host-trait-${trait.name}`;
+                return (
+                  <label className="block" key={trait.name} htmlFor={id}>
+                    <span className="text-xs text-gray-400 mb-1 block">
+                      {trait.name}
+                    </span>
+                    {trait.values ? (
+                      <select
+                        id={id}
+                        value={overrideTraits[trait.name] ?? ""}
+                        onChange={(e) =>
+                          setTraitOverride(trait.name, e.target.value)
+                        }
+                        className="w-full rounded bg-gray-900 border border-gray-700 px-2 py-1.5 text-sm text-gray-200"
+                      >
+                        <option value="">(unset)</option>
+                        {trait.values.map((value) => (
+                          <option key={value} value={value}>
+                            {value}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <input
+                        id={id}
+                        type="text"
+                        value={overrideTraits[trait.name] ?? ""}
+                        onChange={(e) =>
+                          setTraitOverride(trait.name, e.target.value)
+                        }
+                        className="w-full rounded bg-gray-900 border border-gray-700 px-2 py-1.5 text-sm text-gray-200"
+                      />
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          )}
           <div className="flex gap-2">
             <button
               type="button"

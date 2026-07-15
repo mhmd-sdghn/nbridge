@@ -5,7 +5,10 @@
 
 export { defineHostRules } from "./HostRulesEngine";
 export {
+  type HostTraitSource,
   type HostVersionSource,
+  type TraitFromQueryOptions,
+  traitFromQuery,
   type VersionFromQueryOptions,
   versionFromQuery,
   versionFromUserAgent,
@@ -13,12 +16,18 @@ export {
 export type {
   CapabilityName,
   CapabilityRule,
+  CapabilityWhen,
   HostInfo,
   HostOverride,
   HostPlatformConfig,
   HostRules,
   HostRulesConfig,
   PlatformSelect,
+  TraitDef,
+  TraitMatch,
+  TraitName,
+  TraitsConfig,
+  TraitValue,
   VariantDef,
   VariantName,
   VariantRule,

@@ -62,11 +62,13 @@
         <h2>Host Rules</h2>
         <p class="dim">
           <code>defineHostRules</code> resolves named capabilities and variants
-          from <code>(platform, version)</code>. Version comes from
-          <code>?hv=&lt;n&gt;</code> on the URL (try <code>?hv=2</code> or
-          <code>?hv=3</code>). The controls below drive
-          <code>setVersion()</code> and the dev-only <code>__setOverride()</code>
-          so you can preview any host without leaving the browser.
+          from <code>(platform, version)</code> plus arbitrary traits. Version
+          comes from <code>?hv=&lt;n&gt;</code> (try <code>?hv=2</code> or
+          <code>?hv=3</code>) and an <code>mk</code> trait from
+          <code>?mk=&lt;channel&gt;</code> (try <code>?mk=google</code> or
+          <code>?mk=bing</code>). The controls below drive
+          <code>setVersion()</code>, <code>setTrait()</code>, and the dev-only
+          <code>__setOverride()</code> so you can preview any host in the browser.
         </p>
 
         <div class="row">
@@ -87,6 +89,15 @@
             placeholder="e.g. 9.2"
             spellcheck="false"
           />
+          <label for="host-mk">mk</label>
+          <input
+            id="host-mk"
+            type="text"
+            class="input-num"
+            style="width: 90px"
+            placeholder="google / bing"
+            spellcheck="false"
+          />
           <button id="host-apply" class="btn btn-primary" type="button">
             Apply
           </button>
@@ -97,6 +108,8 @@
           <span id="host-info" class="badge">resolving…</span>
           <span id="cap-nativeShare" class="badge">nativeShare: …</span>
           <span id="cap-betaBanner" class="badge">betaBanner: …</span>
+          <span id="cap-promoBanner" class="badge">promoBanner: …</span>
+          <span id="trait-mk" class="badge">mk: …</span>
           <span id="var-saveFlow" class="badge">saveFlow: …</span>
         </div>
 

@@ -23,6 +23,27 @@ const host = defineHostRules({
   },
 });
 
+// A host with traits: `mk` has a declared value domain, `tenant` is open-ended.
+const traitHost = defineHostRules({
+  traits: {
+    mk: { source: () => null, values: ["google", "bing"] as const },
+    tenant: () => null,
+  },
+  capabilities: {
+    promo: { web: true, when: { traits: { mk: "google" } } },
+  },
+  variants: {
+    channel: {
+      rules: [
+        { when: { traits: { mk: "google" } }, use: "G" },
+        { when: { traits: { mk: ["bing"] } }, use: "B" }, // array = one of
+        { when: { traits: { tenant: "acme" } }, use: "T" }, // open-ended: any string
+      ],
+      default: "D",
+    },
+  },
+});
+
 function _typeAssertions() {
   // Capability names are inferred literals — a typo is a compile error.
   host.supports("nativeShare");
@@ -39,6 +60,32 @@ function _typeAssertions() {
   expectTypeOf(host.select({ ios: 1, default: 2 })).toEqualTypeOf<number>();
   // @ts-expect-error — missing required `default`
   host.select({ ios: 1 });
+
+  // A declared-domain trait rejects values outside its `values` list.
+  defineHostRules({
+    traits: { mk: { source: () => null, values: ["google", "bing"] as const } },
+    variants: {
+      f: {
+        rules: [
+          { when: { traits: { mk: "google" } }, use: "A" },
+          // @ts-expect-error — "gogle" is not a declared value of trait "mk"
+          { when: { traits: { mk: "gogle" } }, use: "B" },
+        ],
+        default: "A",
+      },
+    },
+  });
+
+  // setTrait is typed to declared trait names.
+  traitHost.setTrait("mk", "bing");
+  traitHost.setTrait("tenant", "acme");
+  // @ts-expect-error — "nope" is not a declared trait
+  traitHost.setTrait("nope", "x");
+
+  // variant() value union still includes every rule's `use` plus the default.
+  expectTypeOf(traitHost.variant("channel")).toEqualTypeOf<
+    "G" | "B" | "T" | "D"
+  >();
 }
 
 describe("Host Rules type inference", () => {

@@ -1,10 +1,10 @@
 /**
- * Built-in version sources for the Host Rules engine.
+ * Built-in version and trait sources for the Host Rules engine.
  *
- * A version source is just a `() => string | null` function — the built-ins
- * are factories that return one, so custom sources and built-ins share the
- * same type. The engine invokes the source during resolution; call sites never
- * see the raw version.
+ * A source is just a `() => string | null` function. The built-ins are
+ * factories that return one, so custom sources and built-ins share the same
+ * type. The engine invokes the source during resolution; call sites never see
+ * the raw value.
  */
 
 /**
@@ -13,6 +13,13 @@
  * conservative).
  */
 export type HostVersionSource = () => string | null;
+
+/**
+ * A pluggable source of a trait value. Same shape as {@link HostVersionSource};
+ * `null` means the trait is unknown, which the engine treats conservatively (a
+ * rule requiring that trait does not match).
+ */
+export type HostTraitSource = () => string | null;
 
 /** Options for {@link versionFromQuery}. */
 export interface VersionFromQueryOptions {
@@ -24,46 +31,90 @@ export interface VersionFromQueryOptions {
   storageKey?: string;
 }
 
-const DEFAULT_STORAGE_KEY = "nbridge:host-version";
+/** Options for {@link traitFromQuery}. */
+export interface TraitFromQueryOptions {
+  /**
+   * sessionStorage key used to persist the trait.
+   * @default "nbridge:trait:<param>"
+   */
+  storageKey?: string;
+  /**
+   * Persist the value to sessionStorage so it survives client-side navigation
+   * that drops the query param. Set `false` to read only the current URL.
+   * @default true
+   */
+  persist?: boolean;
+}
+
+const VERSION_STORAGE_KEY = "nbridge:host-version";
 
 /**
- * Read the host version from a URL query param (default `hv`), persisting it to
- * sessionStorage so it survives client-side navigation that drops the param.
- *
- * Precedence: a fresh param wins over a stored value; when the param is absent,
- * the stored value is used; otherwise `null`. This is the zero-config default
- * and the recommended convention — the host appends `?hv=<version>` to the
- * webview/iframe URL.
- *
- * Storage access is wrapped in try/catch — some embedded contexts throw on
- * `sessionStorage`, in which case persistence silently degrades (never crashes).
+ * Read a query param, optionally persisting it to sessionStorage so it survives
+ * client-side navigation that drops the param. A fresh param always wins over
+ * the stored value. Storage access is wrapped in try/catch (some embedded
+ * contexts throw on `sessionStorage`), in which case persistence silently
+ * degrades rather than crashing resolution. Shared by both built-in factories.
  */
-export function versionFromQuery(
-  param = "hv",
-  options: VersionFromQueryOptions = {},
-): HostVersionSource {
-  const storageKey = options.storageKey ?? DEFAULT_STORAGE_KEY;
-
+function queryParamSource(
+  param: string,
+  storageKey: string,
+  persist: boolean,
+): () => string | null {
   return () => {
     if (typeof window === "undefined") return null;
 
     const fromParam = new URLSearchParams(window.location.search).get(param);
     if (fromParam !== null) {
-      try {
-        window.sessionStorage.setItem(storageKey, fromParam);
-      } catch {
-        // Storage unavailable (private mode, sandboxed iframe) — degrade to
-        // no persistence rather than crashing resolution.
+      if (persist) {
+        try {
+          window.sessionStorage.setItem(storageKey, fromParam);
+        } catch {
+          // Storage unavailable (private mode, sandboxed iframe): degrade to
+          // no persistence rather than crashing resolution.
+        }
       }
       return fromParam;
     }
 
+    if (!persist) return null;
     try {
       return window.sessionStorage.getItem(storageKey);
     } catch {
       return null;
     }
   };
+}
+
+/**
+ * Read the host version from a URL query param (default `hv`), persisting it to
+ * sessionStorage so it survives client-side navigation that drops the param.
+ *
+ * This is the zero-config default and the recommended convention: the host
+ * appends `?hv=<version>` to the webview/iframe URL.
+ */
+export function versionFromQuery(
+  param = "hv",
+  options: VersionFromQueryOptions = {},
+): HostVersionSource {
+  return queryParamSource(
+    param,
+    options.storageKey ?? VERSION_STORAGE_KEY,
+    true,
+  );
+}
+
+/**
+ * Read a trait value from a URL query param, e.g. `traitFromQuery("mk")` for a
+ * `?mk=google` marketing/channel param. Persists to sessionStorage by default
+ * (key `nbridge:trait:<param>`) so it survives navigation that drops the param;
+ * pass `{ persist: false }` to read only the current URL.
+ */
+export function traitFromQuery(
+  param: string,
+  options: TraitFromQueryOptions = {},
+): HostTraitSource {
+  const storageKey = options.storageKey ?? `nbridge:trait:${param}`;
+  return queryParamSource(param, storageKey, options.persist ?? true);
 }
 
 /**

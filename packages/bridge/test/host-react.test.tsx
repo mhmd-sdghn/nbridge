@@ -99,6 +99,18 @@ describe("gate components", () => {
   });
 });
 
+describe("useTrait", () => {
+  it("reflects the resolved trait and re-renders on setTrait", () => {
+    const host = defineHostRules({ traits: { mk: () => null } });
+    const { useTrait } = createHostHooks(host);
+    const { result } = renderHook(() => useTrait("mk"));
+
+    expect(result.current).toBeNull();
+    act(() => host.setTrait("mk", "google"));
+    expect(result.current).toBe("google");
+  });
+});
+
 describe("snapshot stability", () => {
   it("does not cause a re-render storm (getSnapshot is cached)", () => {
     const { hooks } = makeHooks();

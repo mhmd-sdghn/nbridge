@@ -1,37 +1,59 @@
 /**
- * `defineHostRules()` — the Host Rules engine factory.
+ * `defineHostRules()`: the Host Rules engine factory.
  *
  * Standalone from `BridgeManager`: it reuses `detectPlatform()` for platform
  * detection but owns nothing else. Resolution runs lazily on first access
- * (safe to import server-side) and is cached until `setVersion` / `refresh` /
- * `__setOverride` re-runs it. The cached snapshot object is replaced only when
- * resolution actually re-runs, so React's `useSyncExternalStore` sees a stable
- * reference (see `createHostHooks`).
+ * (safe to import server-side) and is cached until `setVersion` / `setTrait` /
+ * `refresh` / `__setOverride` re-runs it. The cached snapshot object is replaced
+ * only when resolution actually re-runs, so React's `useSyncExternalStore` sees
+ * a stable reference (see `createHostHooks`).
  */
 
 import type { BridgePlatform } from "../types";
 import {
   type CompiledCapability,
+  type CompiledTraitCondition,
   type CompiledVariant,
   evaluateCapability,
   evaluateVariant,
   type ResolvedHost,
   resolveHost,
 } from "./resolve";
-import { type HostVersionSource, versionFromQuery } from "./sources";
+import {
+  type HostTraitSource,
+  type HostVersionSource,
+  versionFromQuery,
+} from "./sources";
 import type {
   CapabilityRule,
+  CapabilityWhen,
   HostInfo,
   HostOverride,
   HostRules,
   HostRulesConfig,
   HostServerSnapshot,
   PlatformSelect,
+  TraitsConfig,
   VariantDef,
   VariantName,
   VariantValue,
 } from "./types";
 import { type Constraint, parseConstraints } from "./version";
+
+/** Normalize a `when.traits` clause into compiled one-of conditions. */
+function compileTraitMatch(
+  match: Record<string, string | readonly string[] | undefined>,
+): CompiledTraitCondition[] {
+  const conditions: CompiledTraitCondition[] = [];
+  for (const [name, value] of Object.entries(match)) {
+    if (value === undefined) continue;
+    conditions.push({
+      name,
+      values: Array.isArray(value) ? [...value] : [value as string],
+    });
+  }
+  return conditions;
+}
 
 function compileCapabilities(
   capabilities: Record<string, CapabilityRule>,
@@ -39,28 +61,40 @@ function compileCapabilities(
   const compiled: Record<string, CompiledCapability> = {};
 
   for (const [name, rule] of Object.entries(capabilities)) {
-    const perPlatform: CompiledCapability = {};
-    for (const [platform, value] of Object.entries(rule) as Array<
-      [BridgePlatform, boolean | string | string[] | undefined]
-    >) {
-      // An explicit `undefined` is treated the same as an absent key: the
-      // capability is off on that platform (fail-safe — a missing flag never
-      // silently enables a capability). Skipping also avoids feeding
-      // `undefined` into the constraint parser.
-      if (value === undefined) continue;
-      if (typeof value === "boolean") {
-        perPlatform[platform] = { kind: "bool", value };
+    const platforms: CompiledCapability["platforms"] = {};
+    let traits: CompiledTraitCondition[] | undefined;
+
+    for (const [key, value] of Object.entries(rule)) {
+      if (key === "when") {
+        const when = value as CapabilityWhen | undefined;
+        if (when?.traits) {
+          traits = compileTraitMatch(
+            when.traits as Record<string, string | readonly string[]>,
+          );
+        }
         continue;
       }
-      const constraints = parseConstraints(value);
+
+      const platform = key as BridgePlatform;
+      const platformValue = value as boolean | string | string[] | undefined;
+      // An explicit `undefined` is treated the same as an absent key: the
+      // capability is off on that platform (fail-safe: a missing flag never
+      // silently enables a capability).
+      if (platformValue === undefined) continue;
+      if (typeof platformValue === "boolean") {
+        platforms[platform] = { kind: "bool", value: platformValue };
+        continue;
+      }
+      const constraints = parseConstraints(platformValue);
       if (constraints === null) {
         throw new Error(
-          `[nbridge] Invalid version constraint in capability "${name}" for platform "${platform}": ${JSON.stringify(value)}`,
+          `[nbridge] Invalid version constraint in capability "${name}" for platform "${platform}": ${JSON.stringify(platformValue)}`,
         );
       }
-      perPlatform[platform] = { kind: "constraints", constraints };
+      platforms[platform] = { kind: "constraints", constraints };
     }
-    compiled[name] = perPlatform;
+
+    compiled[name] = { platforms, traits };
   }
 
   return compiled;
@@ -73,10 +107,14 @@ function compileVariants(
 
   for (const [name, def] of Object.entries(variants)) {
     const rules = def.rules.map((rule, index) => {
-      const { platform, version } = rule.when;
-      if (platform === undefined && version === undefined) {
+      const { platform, version, traits } = rule.when;
+      if (
+        platform === undefined &&
+        version === undefined &&
+        traits === undefined
+      ) {
         throw new Error(
-          `[nbridge] Variant "${name}" rule #${index} has an empty \`when\` clause — provide at least one of \`platform\` or \`version\`.`,
+          `[nbridge] Variant "${name}" rule #${index} has an empty \`when\` clause. Provide at least one of \`platform\`, \`version\`, or \`traits\`.`,
         );
       }
 
@@ -91,12 +129,38 @@ function compileVariants(
         constraints = parsed;
       }
 
-      return { platform, constraints, use: rule.use };
+      const compiledTraits =
+        traits !== undefined
+          ? compileTraitMatch(
+              traits as Record<string, string | readonly string[]>,
+            )
+          : undefined;
+
+      return { platform, constraints, traits: compiledTraits, use: rule.use };
     });
     compiled[name] = { rules, default: def.default };
   }
 
   return compiled;
+}
+
+/** Split each trait declaration into its source and any declared values. */
+function compileTraits(traits: TraitsConfig | undefined): {
+  sources: Record<string, HostTraitSource>;
+  values: Record<string, string[] | undefined>;
+} {
+  const sources: Record<string, HostTraitSource> = {};
+  const values: Record<string, string[] | undefined> = {};
+  for (const [name, def] of Object.entries(traits ?? {})) {
+    if (typeof def === "function") {
+      sources[name] = def;
+      values[name] = undefined;
+    } else {
+      sources[name] = def.source;
+      values[name] = def.values ? [...def.values] : undefined;
+    }
+  }
+  return { sources, values };
 }
 
 function resolveVersionSource(
@@ -117,13 +181,15 @@ function toInfo(host: ResolvedHost): HostInfo {
     version: host.version,
     versionRaw: host.versionRaw,
     isNative: host.isNative,
+    traits: host.traits,
   };
 }
 
 /**
  * The conservative state the server resolves to (see `resolveHost`'s server
- * branch): platform `"web"`, version unknown. Capabilities and variants are
- * evaluated against this to build the SSR snapshot, so hydration matches.
+ * branch): platform `"web"`, version and traits unknown. Capabilities and
+ * variants are evaluated against this to build the SSR snapshot, so hydration
+ * matches.
  */
 const SERVER_HOST: ResolvedHost = {
   platform: "web",
@@ -131,27 +197,39 @@ const SERVER_HOST: ResolvedHost = {
   versionRaw: null,
   parsed: null,
   isNative: false,
+  traits: {},
 };
 
 /**
  * Define an app's Host Rules. Call once at module scope in a per-app config
- * file. Malformed version constraints and empty `when` clauses throw here —
- * fail fast at boot, not silently at evaluation.
+ * file. Malformed version constraints and empty `when` clauses throw here,
+ * failing fast at boot rather than silently at evaluation.
  */
 export function defineHostRules<
-  const TCaps extends Record<string, CapabilityRule>,
-  const TVariants extends Record<string, VariantDef>,
->(config: HostRulesConfig<TCaps, TVariants>): HostRules<TCaps, TVariants> {
-  const compiledCapabilities = compileCapabilities(config.capabilities ?? {});
-  const compiledVariants = compileVariants(config.variants ?? {});
+  const TTraits extends TraitsConfig,
+  const TCaps extends Record<string, CapabilityRule<TTraits>>,
+  const TVariants extends Record<string, VariantDef<string, TTraits>>,
+>(
+  config: HostRulesConfig<TTraits, TCaps, TVariants>,
+): HostRules<TCaps, TVariants, TTraits> {
+  const compiledCapabilities = compileCapabilities(
+    (config.capabilities ?? {}) as Record<string, CapabilityRule>,
+  );
+  const compiledVariants = compileVariants(
+    (config.variants ?? {}) as Record<string, VariantDef>,
+  );
   const androidInterface = config.platform?.androidInterface;
   const iosHandler = config.platform?.iosHandler;
   const versionSource = resolveVersionSource(config.version);
+  const { sources: traitSources, values: traitValues } = compileTraits(
+    config.traits,
+  );
 
   let resolved: ResolvedHost | null = null;
   let info: HostInfo | null = null;
   let serverSnapshot: HostServerSnapshot | null = null;
   let explicitVersion: string | null = null;
+  const explicitTraits: Record<string, string> = {};
   let override: HostOverride | null = null;
   const listeners = new Set<() => void>();
 
@@ -161,6 +239,8 @@ export function defineHostRules<
       iosHandler,
       versionSource,
       explicitVersion,
+      traitSources,
+      explicitTraits,
       override,
     });
     info = toInfo(resolved);
@@ -177,7 +257,7 @@ export function defineHostRules<
     for (const listener of listeners) listener();
   }
 
-  const engine: HostRules<TCaps, TVariants> = {
+  const engine: HostRules<TCaps, TVariants, TTraits> = {
     supports(name) {
       const capability = compiledCapabilities[name];
       if (capability === undefined) return false;
@@ -216,6 +296,15 @@ export function defineHostRules<
       reresolve();
     },
 
+    setTrait(name, value) {
+      if (value === null) {
+        delete explicitTraits[name];
+      } else {
+        explicitTraits[name] = value;
+      }
+      reresolve();
+    },
+
     refresh() {
       reresolve();
     },
@@ -229,6 +318,10 @@ export function defineHostRules<
       return {
         capabilities: Object.keys(compiledCapabilities),
         variants: Object.keys(compiledVariants),
+        traits: Object.keys(traitSources).map((name) => ({
+          name,
+          values: traitValues[name],
+        })),
       };
     },
 
@@ -242,7 +335,14 @@ export function defineHostRules<
         for (const [name, variant] of Object.entries(compiledVariants)) {
           variants[name] = evaluateVariant(variant, SERVER_HOST);
         }
-        serverSnapshot = { info: toInfo(SERVER_HOST), supports, variants };
+        // Report every declared trait as unknown, matching the client shape.
+        const traits: Record<string, string | null> = {};
+        for (const name of Object.keys(traitSources)) traits[name] = null;
+        serverSnapshot = {
+          info: { ...toInfo(SERVER_HOST), traits },
+          supports,
+          variants,
+        };
       }
       return serverSnapshot;
     },

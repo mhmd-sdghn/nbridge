@@ -16,6 +16,7 @@ import {
   host,
   useCapability,
   useHostInfo,
+  useTrait,
   useVariant,
   VariantSwitch,
 } from "./host";
@@ -252,23 +253,26 @@ export default function App() {
   );
 }
 
-// Host Rules demo — capabilities, a variant, and a gate component, all driven
-// by the resolved (platform, version). Change the version with ?hv=<n> on the
-// URL, or override the platform in the DevTools "Host" tab.
+// Host Rules demo — capabilities, a variant, and a trait, all driven by the
+// resolved (platform, version, trait). Change ?hv= or ?mk= on the URL, or
+// override any of them in the DevTools "Host" tab.
 function HostRulesDemo() {
   const info = useHostInfo();
   const nativeShare = useCapability("nativeShare");
   const betaBanner = useCapability("betaBanner");
+  const promoBanner = useCapability("promoBanner");
   const saveFlow = useVariant("saveFlow");
+  const mk = useTrait("mk");
 
   return (
     <section className="panel">
       <h2>Host Rules</h2>
       <p className="dim" style={{ fontSize: 13 }}>
         Resolved from{" "}
-        <code>{`(${info.platform}, ${info.version ?? "—"})`}</code>. Append{" "}
-        <code>?hv=2</code> or <code>?hv=3</code> to the URL, or override the
-        platform in the DevTools <strong>Host</strong> tab.
+        <code>{`(${info.platform}, ${info.version ?? "none"}, mk=${mk ?? "none"})`}</code>
+        . Append <code>?hv=2</code>, <code>?hv=3</code>, <code>?mk=google</code>
+        , or <code>?mk=bing</code> to the URL, or override them in the DevTools{" "}
+        <strong>Host</strong> tab.
       </p>
 
       <div className="badges" style={{ marginBottom: 12 }}>
@@ -277,6 +281,9 @@ function HostRulesDemo() {
         </span>
         <span className={`badge ${betaBanner ? "badge-ok" : "badge-err"}`}>
           betaBanner: {String(betaBanner)}
+        </span>
+        <span className={`badge ${promoBanner ? "badge-ok" : "badge-err"}`}>
+          promoBanner: {String(promoBanner)}
         </span>
         <span className="badge">saveFlow: {saveFlow}</span>
       </div>
