@@ -32,28 +32,27 @@ export class AndroidAdapter implements IPlatformAdapter {
   }
 
   public send(message: BridgeMessage): void {
-    if (!this.isAvailable()) {
-      throw new Error("Android bridge not available");
-    }
-
-    const bridge = (
-      window as unknown as Record<
-        string,
-        { postMessage: (msg: string) => void }
-      >
-    )[this.interfaceName];
+    // Single lookup + validation (no separate isAvailable() re-read).
+    const bridge =
+      typeof window === "undefined"
+        ? undefined
+        : (
+            window as unknown as Record<
+              string,
+              { postMessage?: (msg: string) => void }
+            >
+          )[this.interfaceName];
 
     if (!bridge || typeof bridge.postMessage !== "function") {
       throw new Error(
-        `Android bridge interface "${this.interfaceName}" not found on window (or has no postMessage function)`,
+        `Android bridge interface "${this.interfaceName}" not available (missing or has no postMessage function)`,
       );
     }
 
     // JSON.stringify directly (not safeStringify): a non-serializable payload
     // must fail the send loudly, matching iOS behavior, instead of silently
     // delivering "{}" to the native side.
-    const messageStr = JSON.stringify(message);
-    bridge.postMessage(messageStr);
+    bridge.postMessage(JSON.stringify(message));
   }
 
   public destroy(): void {

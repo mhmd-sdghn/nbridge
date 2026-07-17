@@ -40,6 +40,7 @@ export class IframeAdapter implements IPlatformAdapter {
   }
 
   public initialize(onMessage: (message: BridgeMessage) => void): void {
+    if (typeof window === "undefined") return;
     if (!this.parentOrigin) {
       // No origin configured and no explicit wildcard opt-in: refuse to accept
       // cross-origin traffic. A hostile embedder could otherwise both inject

@@ -114,14 +114,14 @@ Fix: in `destroy()`, `if (bridgeInstance === this) bridgeInstance = null`. Add a
 
 Fixed: `destroy()` now resets the singleton when it owns it, `send()` throws on a destroyed bridge, and `getBridge(config)` warns when an instance already exists. Covered by the "shared global lifecycle" tests in core-messaging.test.ts.
 
-**1.12 `expectResponse` requests queued offline are delivered after the caller's timeout already rejected**
+**1.12 [FIXED] `expectResponse` requests queued offline are delivered after the caller's timeout already rejected**
 `src/core/BridgeManager.ts:563-571, 588-594`
 
 When an `expectResponse` message is sent while offline (or the adapter throws with a queue configured), `sendOutgoing` silently parks it and returns normally, so the caller's response timeout keeps ticking (default 5000ms, equal to the default flushInterval). The queue later delivers the request, but by then the caller usually got "Request timed out"; the eventual response is discarded. Dangerous pattern: caller times out on `sendWithResponse("purchase")`, retries, and the native side executes the purchase twice.
 
 Fix: either refuse to queue `expectResponse` messages (reject immediately with a distinct "offline" error so callers know it was never delivered), or pause the response timeout while queued and remove the message from the queue when the timeout fires.
 
-**1.13 `compression.algorithm` is a dead option: "gzip" and "br" silently produce zlib-deflate**
+**1.13 [FIXED] `compression.algorithm` is a dead option: "gzip" and "br" silently produce zlib-deflate**
 `src/types/index.ts:403`, `src/core/CompressionManager.ts:37, 66`
 
 The config advertises `algorithm: "gzip" | "deflate" | "br"` but `compress()` unconditionally calls `pako.deflate` (zlib format) and `decompress()` `pako.inflate`. A team that sets `"gzip"` and implements the native side accordingly (e.g. GZIPInputStream on Android) fails to decompress every outbound payload. `"br"` is not implementable with pako at all.
@@ -231,7 +231,7 @@ Fix: claim persisted messages atomically (remove the key immediately after load)
 
 ### Low
 
-**1.27 MessageQueue internals: priority order duplicated 3x, hardcoded retry cap, stats restored blindly from storage, dead members**
+**1.27 [FIXED] MessageQueue internals: priority order duplicated 3x, hardcoded retry cap, stats restored blindly from storage, dead members**
 `src/core/MessageQueue.ts:19-23, 95-127, 151-155, 177, 268`
 
 The literal `[HIGH, NORMAL, LOW]` array is written out in `dequeue`, `peek`, and `flush`, with the same order encoded again in the Map initializer; adding/reordering a priority silently strands messages (accepted by enqueue, never flushed). The retry cap is a magic `3` not exposed in QueueConfig. `loadFromStorage` restores `stats` verbatim from disk (stale `pending` counts). `dequeue()` and `peek()` are never called by anything (dead code), `QueuedMessage.retries` is set to 0 and never used (dead field), and `dequeue` updates `stats.size` but not `stats.pending` (inconsistent with `flush`).
@@ -247,14 +247,14 @@ Fix: per-frame dispatch with an "already called" check that throws `next() calle
 
 Fixed: replaced the shared mutable `index` with recursive per-position `dispatch(i, msg)`. Each `next()` runs the remainder of the chain from the caller's fixed position, so siblings can never be skipped (the actual bug). Note: a deliberate re-call of `next()` re-runs downstream from that point rather than throwing, because the shipped `retryMiddleware` relies on that to re-drive the transport; the chain is snapshotted per run so concurrent `use()`/`clear()` cannot corrupt it. Covered by the new middleware.test.ts chain-semantics tests.
 
-**1.29 `middleware.enabled` is a near-useless flag that forces duplicated branching; `MiddlewareContext.bridge` is typed `unknown`**
+**1.29 [FIXED] `middleware.enabled` is a near-useless flag that forces duplicated branching; `MiddlewareContext.bridge` is typed `unknown`**
 `src/core/MiddlewareManager.ts:25-27`, `src/core/BridgeManager.ts:371-381, 574-584`, `src/types/index.ts:190, 276-279`
 
 `execute` already short-circuits when no middleware is registered, so the flag only matters for the incoherent combination "register middleware AND disable the system" (which `use()` still silently accepts and counts). The flag's existence duplicates the `middleware?.enabled` fork in two pipelines. Separately, `MiddlewareContext.bridge: unknown` forces every middleware author to cast.
 
 Fix (breaking): delete `MiddlewareConfig`; registering no middleware is the off switch. Type `bridge` as `IBridgeManager` (a type-only import creates no cycle).
 
-**1.30 `off(type, handler)` cannot remove handlers registered via `onWithResponse`**
+**1.30 [FIXED] `off(type, handler)` cannot remove handlers registered via `onWithResponse`**
 `src/core/BridgeManager.ts:698-735`
 
 `onWithResponse` registers a wrapper; the Set is keyed by function identity, so `off(type, originalHandler)` deletes nothing while still logging "Removed handler". Natural symmetric usage (register on mount, `off` on unmount) accumulates stale wrappers that all answer each request.
@@ -268,14 +268,14 @@ A second `register` with the same id orphan's the first entry's resolve/reject, 
 
 Fix: key the timeout closure to its own entry object (`get(id) === entry` check); reject-and-replace or refuse on duplicate registration. Consider `crypto.randomUUID()` (with fallback) for id generation.
 
-**1.32 Incoming batch entries are dispatched sequentially: head-of-line blocking that non-batched delivery does not have**
+**1.32 [FIXED] Incoming batch entries are dispatched sequentially: head-of-line blocking that non-batched delivery does not have**
 `src/core/BridgeManager.ts:389-393`
 
 Each batch entry is awaited in turn, and each dispatch awaits all its handlers. One slow handler on entry 1 delays entry 10 by its full duration, even though batched messages are by construction fire-and-forget and independent, and non-batched incoming messages are NOT serialized against each other.
 
 Fix: if ordering is not an intended guarantee, dispatch entries without awaiting each (collect promises, `Promise.allSettled` at the end). If ordering IS intended, document it.
 
-**1.33 Rolling response-time average uses shift() + full reduce per sample**
+**1.33 [FIXED] Rolling response-time average uses shift() + full reduce per sample**
 `src/core/MetricsCollector.ts:91-102`
 
 Bounded (window of 100, and `detailedTiming` is off by default) so the absolute cost is tiny, but it is pure per-response overhead in a hot path and the 100 is an unexported magic number.
@@ -289,14 +289,14 @@ Message history retains live references to up to 50 payloads (multi-MB payloads 
 
 Fix: store size-capped snapshots (truncated preview + byte count above a few KB) instead of live references.
 
-**1.35 Handshake defaults duplicated; magic 10000 appears three times with two meanings**
+**1.35 [FIXED] Handshake defaults duplicated; magic 10000 appears three times with two meanings**
 `src/core/BridgeManager.ts:93-95, 290, 322`
 
 Constructor normalizes handshake timeout/retryInterval, `startHandshake` re-defaults the identical literals (partly forced by the shallow `Required<>` typing), and `waitForReady`'s default parameter is a conceptually different timeout that coincidentally equals 10000.
 
 Fix: named constants (`DEFAULT_HANDSHAKE_TIMEOUT_MS`, `DEFAULT_HANDSHAKE_RETRY_MS`, `DEFAULT_READY_TIMEOUT_MS`) in one module; a properly typed resolved config (1.2) removes the forced re-defaulting.
 
-**1.36 Schema validation block duplicated between send() and sendWithResponse(); response validation only happens on one of the two paths**
+**1.36 [FIXED] Schema validation block duplicated between send() and sendWithResponse(); response validation only happens on one of the two paths**
 `src/core/BridgeManager.ts:444-454, 539-549`
 
 The lookup-and-validate block is near-verbatim in both methods, and a consumer calling `send(type, payload, { expectResponse: true })` gets unvalidated response data while `sendWithResponse` validates it. (The type signatures do differ, so this is a runtime-consistency and duplication issue, not a type-safety lie.)
@@ -310,13 +310,15 @@ The overload trios carry three JSDoc blocks each saying only "typed version"/"un
 
 Fix: collapse per-overload noise into one doc block per method; document the behaviors above where consumers will see them.
 
-**1.38 Dead code and unreachable guards**
+**1.38 [FIXED] Dead code and unreachable guards**
 `src/utils/helpers.ts:26-33`, `src/core/BatchManager.ts:28-30`, `src/core/MessageQueue.ts:47-49, 95-127`, `src/core/ResponseManager.ts:98-109`
 
 - `createTimeoutPromise` is exported and used by nothing in src.
 - `BatchManager.add` throws "Batching is not enabled" and `MessageQueue.enqueue` returns false when `!config.enabled`, but both objects are only ever constructed when enabled: unreachable branches (and inconsistent failure styles: throw vs boolean).
 - `MessageQueue.dequeue`/`peek`/`QueuedMessage.retries`: dead (see 1.27).
 - `ResponseManager.clear` iterates the map twice back-to-back (clearTimeout loop, then reject loop); one loop suffices.
+
+Fixed: removed `createTimeoutPromise`, `MessageQueue.dequeue`/`peek`; `QueuedMessage.retries` deprecated (1.27); `ResponseManager.clear` is a single loop. The `!config.enabled` guards in `BatchManager.add`/`MessageQueue.enqueue` are kept as intentional defensive checks (harmless, and protect direct instantiation).
 
 Fix: delete dead exports/members, convert unreachable guards into a single consistent invariant style or remove them, merge the double loop.
 
@@ -391,35 +393,37 @@ IframeAdapter accepts object frames AND JSON-string frames; WebAdapter accepts o
 
 Fix: introduce two small bases: a `PostMessageAdapter` (listener lifecycle + one shared `parseMessage` accepting object and JSON-string frames) and a `NativeGlobalAdapter` (shared receive-function attach/detach per 2.3).
 
-**2.8 Platform priority order is encoded twice; `getPlatform()` reports via a different mechanism than the one that picked the adapter**
+**2.8 [FIXED] Platform priority order is encoded twice; `getPlatform()` reports via a different mechanism than the one that picked the adapter**
 `src/utils/platform.ts:42-57`, `src/core/PlatformDetector.ts:21-23, 52-59`
 
 `detectPlatform()` hardcodes android > ios > iframe > web, and `getAllAdapters()` re-encodes the same priority as array order. `BridgeManager.getPlatform()` reports via the first path while traffic flows through an adapter chosen by the second; they agree today only because both delegate to the same predicates, and any future edit to either list silently desynchronizes them.
 
 Fix: single source of truth: derive `getPlatformInfo().platform` from the already-selected adapter's `getPlatformType()`, and cache the result (see 2.11).
 
-**2.9 `isIOS()` returns false on all modern iPads; `isAndroid()` matches plain Chrome tabs; both are exported as public API**
+**2.9 [FIXED] `isIOS()` returns false on all modern iPads; `isAndroid()` matches plain Chrome tabs; both are exported as public API**
 `src/utils/platform.ts:3-11`, `src/index.ts:122, 124`
 
 iPadOS 13+ defaults to a desktop Macintosh UA, so `/iPhone|iPad|iPod/` misses the entire modern iPad fleet; `isAndroid()` matches any Android browser, not just a WebView. Adapter selection is unaffected (it keys off bridge-object presence), which makes these exported helpers a trap: consumers will naturally use them for "am I in the native app?" branching and get wrong answers.
 
 Fix: add the standard iPadOS check (`navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1`), document both as OS heuristics rather than bridge detection, and point consumers to `getPlatformInfo()`/`hasAndroidBridge()`/`hasIOSBridge()`; or stop exporting the raw UA helpers.
 
-**2.10 PlatformDetector and adapter constructors take long, inconsistently ordered positional parameter lists; BridgeManager bypasses its own normalized config**
+**2.10 [PARTIAL] PlatformDetector and adapter constructors take long, inconsistently ordered positional parameter lists; BridgeManager bypasses its own normalized config**
 `src/core/PlatformDetector.ts:13-19`, `src/core/BridgeManager.ts:217-223`
 
 PlatformDetector takes five positional params where three are plain strings (transpositions of `androidInterface`/`iosHandler`/`iframeParentOrigin` type-check fine). Each adapter orders its params differently: (name, logger), (logger, parentOrigin), (flag, logger). BridgeManager also passes raw `config.iframeParentOrigin` (line 222) instead of the normalized `this.config` value it constructed 90 lines earlier.
 
 Fix: replace positional lists with one options object (`{ androidInterface, iosHandler, webLoopback, iframeParentOrigin, logger }`); stop wrapping optional-by-design fields in `Required<>` (pairs with 1.2).
 
+Fixed so far: BridgeManager now passes the normalized `this.config.iframeParentOrigin` (was raw `config.iframeParentOrigin`), and the `Required<>` casts were removed by `normalizeConfig` (1.2). Remaining: the positional constructor lists were not converted to an options object (pure-structure change, deferred).
+
 ### Low
 
-**2.11 Redundant per-message and per-call detection work**
+**2.11 [FIXED] Redundant per-message and per-call detection work**
 `src/core/adapters/AndroidAdapter.ts:29-48`, `src/core/adapters/IOSAdapter.ts:28-55`, `src/core/PlatformDetector.ts:21-35`
 
 `AndroidAdapter.send` resolves the bridge object three times per message (isAvailable, re-read, null check); `IOSAdapter.send` walks the `webkit.messageHandlers` chain twice (and those lookups cross WebKit's binding layer). `getPlatform()` re-runs full detection and allocates a fresh PlatformInfo on every call even though the adapter is fixed at construction. All small in absolute terms; the fix is mostly simplification: one lookup + null check per send, and compute PlatformInfo once (derive from the active adapter per 2.8).
 
-**2.12 Dead and inert code in the adapter layer**
+**2.12 [FIXED] Dead and inert code in the adapter layer**
 `src/core/PlatformDetector.ts:37-50, 61-64`, `src/core/adapters/WebAdapter.ts:13`
 
 - `PlatformDetector.getAdapterForPlatform()` and `isPlatformAvailable()` have zero callers in src (and PlatformDetector is not exported from index.ts); the switch is yet another copy of the platform list.
@@ -428,12 +432,14 @@ Fix: replace positional lists with one options object (`{ androidInterface, iosH
 
 Fix: delete the unused methods (or export PlatformDetector deliberately and test it); wire WebAdapter's logger into its parse-reject path or drop the parameter.
 
-**2.13 jsdom-specific origin exception ships in production code; SSR guards are inconsistent across adapters**
+**2.13 [PARTIAL] jsdom-specific origin exception ships in production code; SSR guards are inconsistent across adapters**
 `src/core/adapters/WebAdapter.ts:27-32`, `src/core/adapters/IframeAdapter.ts:26`
 
 The loopback listener accepts `event.origin === ""` purely as a jsdom workaround, coupled to the same `webLoopback` flag the WebAdapter error message tells real users to enable for local development (practical widening is near-nil in real browsers, which report opaque origins as `"null"` not `""`, but it is a test-runner quirk baked into shipped code). Separately, Android/iOS `initialize()` guard `typeof window === "undefined"` while Iframe/Web adapters do not (they are protected only by BridgeManager's own early return).
 
 Fix: handle the jsdom quirk in test setup instead, and put the SSR guard in exactly one place (the shared base from 2.7, or document the window guarantee on `IPlatformAdapter.initialize`).
+
+Fixed so far: Iframe/Web adapters now guard `typeof window === "undefined"` in `initialize()` (consistent with Android/iOS), and the window/throw contract is documented on `IPlatformAdapter`. Remaining: the jsdom `origin === ""` loopback exception still ships in `WebAdapter` (harmless in real browsers, which use `"null"` for opaque origins).
 
 **2.14 [FIXED] `isValidMessage` accepts any object with a string `type`: foreign postMessage traffic flows into bridge handlers**
 `src/utils/helpers.ts:56-63`

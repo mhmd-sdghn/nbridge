@@ -95,6 +95,8 @@ export class BridgeManager<
   /** Maps a user handler passed to onWithResponse to the wrapper actually registered, so off() can remove it. */
   // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
   private readonly responseHandlerWrappers = new WeakMap<any, any>();
+  /** Cached platform info derived from the selected adapter (fixed at construction). */
+  private platformInfo: PlatformInfo | null = null;
 
   constructor(config: BridgeConfig<TSchemas> = {}) {
     this.schemas = config.schemas;
@@ -208,7 +210,7 @@ export class BridgeManager<
       this.config.iosHandler,
       this.config.webLoopback,
       this.logger,
-      config.iframeParentOrigin,
+      this.config.iframeParentOrigin,
     );
 
     this.adapter = this.platformDetector.createAdapter();
@@ -450,7 +452,19 @@ export class BridgeManager<
   }
 
   public getPlatform(): PlatformInfo {
-    return this.platformDetector.getPlatformInfo();
+    // Derive from the adapter actually selected (single source of truth) and
+    // cache it: the platform cannot change after construction, so re-running
+    // full detection and allocating a fresh object on every call is wasted work.
+    if (!this.platformInfo) {
+      const platform = this.adapter.getPlatformType();
+      this.platformInfo = {
+        platform,
+        isNative: platform === "android" || platform === "ios",
+        userAgent:
+          typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+      };
+    }
+    return this.platformInfo;
   }
 
   // ── Outgoing pipeline ─────────────────────────────────────────────────────
