@@ -195,8 +195,8 @@ export interface MiddlewareContext {
   direction: "outgoing" | "incoming";
   /** Timestamp when middleware execution started */
   timestamp: number;
-  /** Bridge instance reference */
-  bridge?: unknown;
+  /** The bridge instance running the middleware chain. */
+  bridge?: IBridgeManager;
 }
 
 /**

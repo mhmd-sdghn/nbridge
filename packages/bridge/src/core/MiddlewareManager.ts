@@ -1,4 +1,9 @@
-import type { BridgeMessage, Middleware, MiddlewareContext } from "../types";
+import type {
+  BridgeMessage,
+  IBridgeManager,
+  Middleware,
+  MiddlewareContext,
+} from "../types";
 import type { BridgeLogger } from "../utils/helpers";
 
 export class MiddlewareManager {
@@ -54,7 +59,7 @@ export class MiddlewareManager {
   public async executeOutgoing(
     message: BridgeMessage,
     finalHandler: (message: BridgeMessage) => Promise<void>,
-    bridge?: unknown,
+    bridge?: IBridgeManager,
   ): Promise<void> {
     const context: MiddlewareContext = {
       direction: "outgoing",
@@ -68,7 +73,7 @@ export class MiddlewareManager {
   public async executeIncoming(
     message: BridgeMessage,
     finalHandler: (message: BridgeMessage) => Promise<void>,
-    bridge?: unknown,
+    bridge?: IBridgeManager,
   ): Promise<void> {
     const context: MiddlewareContext = {
       direction: "incoming",

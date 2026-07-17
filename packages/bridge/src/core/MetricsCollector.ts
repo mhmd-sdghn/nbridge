@@ -10,6 +10,8 @@ interface MessageTiming {
 /** Cap and TTL for pendingTimings so fire-and-forget sends cannot leak it. */
 const MAX_PENDING_TIMINGS = 1000;
 const PENDING_TIMING_TTL_MS = 60_000;
+/** Rolling window size for the response-time average. */
+const RESPONSE_TIME_WINDOW = 100;
 
 export class MetricsCollector {
   private metrics: BridgeMetrics = {
@@ -26,6 +28,7 @@ export class MetricsCollector {
   };
 
   private responseTimes: number[] = [];
+  private responseTimesSum = 0;
   private pendingTimings = new Map<string, MessageTiming>();
   private listeners = new Set<MetricsListener>();
   private updateTimer?: ReturnType<typeof setInterval>;
@@ -95,16 +98,18 @@ export class MetricsCollector {
   }
 
   private recordResponseTime(time: number): void {
+    // Maintain a running sum over the last 100 samples so the rolling average
+    // is O(1) per sample instead of O(n) shift()+reduce().
     this.responseTimes.push(time);
+    this.responseTimesSum += time;
 
-    // Keep only last 100 response times for rolling average
-    if (this.responseTimes.length > 100) {
-      this.responseTimes.shift();
+    if (this.responseTimes.length > RESPONSE_TIME_WINDOW) {
+      const evicted = this.responseTimes.shift();
+      if (evicted !== undefined) this.responseTimesSum -= evicted;
     }
 
-    // Calculate average
-    const sum = this.responseTimes.reduce((a, b) => a + b, 0);
-    this.metrics.averageResponseTime = sum / this.responseTimes.length;
+    this.metrics.averageResponseTime =
+      this.responseTimesSum / this.responseTimes.length;
   }
 
   /**
@@ -200,6 +205,7 @@ export class MetricsCollector {
       bytesReceived: 0,
     };
     this.responseTimes = [];
+    this.responseTimesSum = 0;
     this.pendingTimings.clear();
     this.startTime = Date.now();
     this.lastSecondCount = 0;

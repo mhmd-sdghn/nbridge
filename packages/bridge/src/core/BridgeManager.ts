@@ -44,7 +44,11 @@ import { MessageHandler } from "./MessageHandler";
 import { MessageQueue } from "./MessageQueue";
 import { MetricsCollector } from "./MetricsCollector";
 import { MiddlewareManager } from "./MiddlewareManager";
-import { normalizeConfig, type ResolvedBridgeConfig } from "./normalizeConfig";
+import {
+  DEFAULT_READY_TIMEOUT_MS,
+  normalizeConfig,
+  type ResolvedBridgeConfig,
+} from "./normalizeConfig";
 import { PlatformDetector } from "./PlatformDetector";
 import { ResponseManager } from "./ResponseManager";
 import { validateWithSchema } from "./validate";
@@ -88,6 +92,9 @@ export class BridgeManager<
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private onlineListener: (() => void) | null = null;
   private isFlushing = false;
+  /** Maps a user handler passed to onWithResponse to the wrapper actually registered, so off() can remove it. */
+  // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
+  private readonly responseHandlerWrappers = new WeakMap<any, any>();
 
   constructor(config: BridgeConfig<TSchemas> = {}) {
     this.schemas = config.schemas;
@@ -269,7 +276,8 @@ export class BridgeManager<
   }
 
   private startHandshake(): void {
-    const { timeout = 10000, retryInterval = 500 } = this.config.handshake;
+    // config.handshake is fully resolved by normalizeConfig; no inline defaults.
+    const { timeout, retryInterval } = this.config.handshake;
     const startedAt = Date.now();
 
     const attempt = () => {
@@ -301,7 +309,7 @@ export class BridgeManager<
     return this.ready;
   }
 
-  public async waitForReady(timeout = 10000): Promise<void> {
+  public async waitForReady(timeout = DEFAULT_READY_TIMEOUT_MS): Promise<void> {
     if (this.ready) return;
     if (this.readyError) throw this.readyError;
     if (this.destroyed) throw new Error("Bridge destroyed");
@@ -407,12 +415,16 @@ export class BridgeManager<
       const entries = (message.payload as { messages?: BridgeMessage[] })
         ?.messages;
       if (Array.isArray(entries)) {
-        for (const entry of entries) {
-          if (isValidMessage(entry)) {
-            // Entries may be individually compressed by the host.
-            await this.processIncomingMessage(this.maybeDecompress(entry));
-          }
-        }
+        // Dispatch entries concurrently: a slow handler on one entry must not
+        // head-of-line block the rest (non-batched delivery does not either).
+        // Entries may be individually compressed by the host.
+        await Promise.all(
+          entries
+            .filter((entry) => isValidMessage(entry))
+            .map((entry) =>
+              this.processIncomingMessage(this.maybeDecompress(entry)),
+            ),
+        );
       }
       return;
     }
@@ -475,19 +487,7 @@ export class BridgeManager<
       throw new Error(`Cannot send "${type}": bridge has been destroyed`);
     }
 
-    let outgoingPayload: unknown = payload;
-
-    if (this.schemas && type in this.schemas) {
-      const schema = this.schemas[type];
-      if (schema?.payloadSchema) {
-        outgoingPayload = await validateWithSchema(
-          schema.payloadSchema,
-          payload,
-          type,
-          "payload",
-        );
-      }
-    }
+    const outgoingPayload: unknown = await this.validatePayload(type, payload);
 
     const message = createMessage(type, outgoingPayload);
 
@@ -573,20 +573,45 @@ export class BridgeManager<
       throw new Error(response.error || "Request failed");
     }
 
-    let data = response.data as R;
+    return (await this.validateResponse(type, response.data)) as R;
+  }
 
+  /** Validate an outgoing payload against its schema (if any) and return the
+   * possibly-transformed value. Shared by the send paths. */
+  private async validatePayload(
+    type: string,
+    payload: unknown,
+  ): Promise<unknown> {
+    if (this.schemas && type in this.schemas) {
+      const schema = this.schemas[type];
+      if (schema?.payloadSchema) {
+        return validateWithSchema(
+          schema.payloadSchema,
+          payload,
+          type,
+          "payload",
+        );
+      }
+    }
+    return payload;
+  }
+
+  /** Validate an incoming response against its schema (if any). */
+  private async validateResponse(
+    type: string,
+    data: unknown,
+  ): Promise<unknown> {
     if (this.schemas && type in this.schemas) {
       const schema = this.schemas[type];
       if (schema?.responseSchema) {
-        data = (await validateWithSchema(
+        return validateWithSchema(
           schema.responseSchema,
           data,
           type,
           "response",
-        )) as R;
+        );
       }
     }
-
     return data;
   }
 
@@ -594,17 +619,27 @@ export class BridgeManager<
    * Runs the outgoing middleware chain, then hands off to the adapter.
    * On adapter failure (or while offline) the message is parked in the
    * offline queue when one is configured; otherwise the error propagates.
+   *
+   * Response-expecting messages are NEVER queued: the caller's response
+   * timeout keeps ticking while a message sits in the queue, so a late flush
+   * would deliver a request after the caller already rejected (and could cause
+   * duplicate execution on retry). For those, we throw so the caller learns
+   * immediately that it was not delivered.
    */
   private async sendOutgoing(
     message: BridgeMessage,
     options?: BridgeSendOptions,
   ): Promise<void> {
-    if (
-      this.messageQueue &&
-      typeof navigator !== "undefined" &&
-      navigator.onLine === false &&
+    const queueable =
+      !!this.messageQueue &&
       !isProtocolType(message.type) &&
-      !this.isFlushing
+      !this.isFlushing &&
+      !options?.expectResponse;
+
+    if (
+      queueable &&
+      typeof navigator !== "undefined" &&
+      navigator.onLine === false
     ) {
       const enqueued = this.enqueue(message, options);
       if (!enqueued) {
@@ -630,11 +665,7 @@ export class BridgeManager<
     } catch (error) {
       this.metricsCollector?.recordFailed(message.id ?? message.type);
 
-      if (
-        this.messageQueue &&
-        !isProtocolType(message.type) &&
-        !this.isFlushing
-      ) {
+      if (queueable) {
         const enqueued = this.enqueue(message, options);
         if (enqueued) {
           this.logger.warn(
@@ -788,12 +819,24 @@ export class BridgeManager<
       }
     };
 
+    // Remember which wrapper belongs to this user handler so a symmetric
+    // off(type, handler) can remove it (the Set is keyed by function identity,
+    // and the wrapper is not the identity the caller holds).
+    // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
+    this.responseHandlerWrappers.set(handler as any, wrappedHandler);
+
     return this.messageHandler.register(type, wrappedHandler);
   }
 
   // biome-ignore lint/suspicious/noExplicitAny: Need to accept handlers of different types
   public off(type: string, handler?: BridgeMessageHandler<any>): void {
-    this.messageHandler.unregister(type, handler);
+    // Translate a user handler registered via onWithResponse to its wrapper so
+    // off(type, originalHandler) actually removes it.
+    const wrapper = handler
+      ? // biome-ignore lint/suspicious/noExplicitAny: identity map spans generic instantiations
+        this.responseHandlerWrappers.get(handler as any)
+      : undefined;
+    this.messageHandler.unregister(type, wrapper ?? handler);
   }
 
   public removeAllListeners(type?: string): void {

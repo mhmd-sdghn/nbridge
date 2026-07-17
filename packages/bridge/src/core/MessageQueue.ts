@@ -15,12 +15,17 @@ const LEGACY_PRIORITY_KEYS: Record<string, MessagePriority> = {
   "2": MessagePriority.LOW,
 };
 
+// Highest-priority-first order. Single source of truth for every queue scan.
+const PRIORITY_ORDER: readonly MessagePriority[] = [
+  MessagePriority.HIGH,
+  MessagePriority.NORMAL,
+  MessagePriority.LOW,
+];
+
 export class MessageQueue {
-  private queue: Map<MessagePriority, QueuedMessage[]> = new Map([
-    [MessagePriority.HIGH, []],
-    [MessagePriority.NORMAL, []],
-    [MessagePriority.LOW, []],
-  ]);
+  private queue: Map<MessagePriority, QueuedMessage[]> = new Map(
+    PRIORITY_ORDER.map((p) => [p, [] as QueuedMessage[]]),
+  );
   private flushing = false;
   private flushCallback?: () => Promise<void>;
   private stats: QueueStats = {
@@ -92,40 +97,6 @@ export class MessageQueue {
     return total;
   }
 
-  public dequeue(): QueuedMessage | null {
-    // Dequeue from highest priority first
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
-      const priorityQueue = this.queue.get(priority);
-      if (priorityQueue && priorityQueue.length > 0) {
-        const message = priorityQueue.shift();
-        if (message) {
-          this.stats.size = this.getTotalSize();
-          return message;
-        }
-      }
-    }
-    return null;
-  }
-
-  public peek(): QueuedMessage | null {
-    // Peek from highest priority first
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
-      const priorityQueue = this.queue.get(priority);
-      if (priorityQueue && priorityQueue.length > 0) {
-        return priorityQueue[0] ?? null;
-      }
-    }
-    return null;
-  }
-
   public async flush(
     sendFn: (
       message: BridgeMessage,
@@ -148,11 +119,7 @@ export class MessageQueue {
 
     // Collect all messages from all priorities
     const messagesToFlush: QueuedMessage[] = [];
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
+    for (const priority of PRIORITY_ORDER) {
       const priorityQueue = this.queue.get(priority);
       if (priorityQueue) {
         messagesToFlush.push(...priorityQueue);
@@ -248,6 +215,13 @@ export class MessageQueue {
       if (stored) {
         const data = JSON.parse(stored);
 
+        // Drop entries whose shape is invalid (corrupt/legacy storage) so a
+        // single bad record cannot crash resolution or wedge the flush loop.
+        const isValidEntry = (m: unknown): m is QueuedMessage =>
+          !!m &&
+          typeof m === "object" &&
+          typeof (m as QueuedMessage).message?.type === "string";
+
         // Load messages into priority queues
         if (data.queueData) {
           // New format with priority queues
@@ -257,20 +231,32 @@ export class MessageQueue {
             const priority = (LEGACY_PRIORITY_KEYS[key] ??
               key) as MessagePriority;
             const priorityQueue = this.queue.get(priority);
-            if (priorityQueue) {
-              priorityQueue.push(...messages.map((m) => ({ ...m, priority })));
+            if (priorityQueue && Array.isArray(messages)) {
+              priorityQueue.push(
+                ...messages
+                  .filter(isValidEntry)
+                  .map((m) => ({ ...m, priority })),
+              );
             }
           }
-        } else if (data.queue) {
+        } else if (data.queue && Array.isArray(data.queue)) {
           // Old format (single array) - migrate to NORMAL priority
           const normalQueue = this.queue.get(MessagePriority.NORMAL);
           if (normalQueue) {
-            normalQueue.push(...data.queue);
+            normalQueue.push(...data.queue.filter(isValidEntry));
           }
         }
 
-        this.stats = data.stats || this.stats;
-        this.logger.info(`Loaded ${this.getTotalSize()} messages from storage`);
+        // Recompute stats from what actually loaded rather than trusting the
+        // persisted counters (which can drift or be corrupt).
+        const size = this.getTotalSize();
+        this.stats = {
+          size,
+          pending: size,
+          failed: 0,
+          completed: 0,
+        };
+        this.logger.info(`Loaded ${size} messages from storage`);
       }
     } catch (error) {
       this.logger.error("Failed to load queue from storage:", error);
