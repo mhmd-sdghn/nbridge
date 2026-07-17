@@ -30,10 +30,12 @@ afterEach(() => {
 });
 
 describe("useBridgeReady / useBridgeReadyState", () => {
-  it("is ready immediately when handshake is disabled (default)", () => {
+  it("becomes ready after mount when handshake is disabled (SSR-safe: starts false)", async () => {
     const { hooks } = makeHooks();
     const { result } = renderHook(() => hooks.useBridgeReady());
-    expect(result.current).toBe(true);
+    // First render is intentionally false so it matches server-rendered HTML;
+    // it flips to ready after the mount effect resolves.
+    await waitFor(() => expect(result.current).toBe(true));
   });
 
   it("surfaces the handshake timeout as an error instead of an unhandled rejection", async () => {

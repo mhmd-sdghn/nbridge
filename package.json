@@ -18,7 +18,7 @@
     "docs:build": "pnpm --filter nbridge-docs docs:build",
     "verify:pkg": "pnpm --filter nbridge verify:pkg",
     "changeset": "changeset",
-    "release": "pnpm build && changeset publish"
+    "release": "pnpm typecheck && pnpm test && pnpm build && pnpm verify:pkg && changeset publish"
   },
   "devDependencies": {
     "@biomejs/biome": "^2.0.0",

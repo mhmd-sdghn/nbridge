@@ -174,7 +174,7 @@ export class MessageQueue {
 
         // Re-queue if attempts left
         queuedMessage.attempts = (queuedMessage.attempts || 0) + 1;
-        if (queuedMessage.attempts < 3) {
+        if (queuedMessage.attempts < this.config.maxRetries) {
           const priorityQueue = this.queue.get(queuedMessage.priority);
           if (priorityQueue) {
             priorityQueue.push(queuedMessage);
@@ -232,6 +232,10 @@ export class MessageQueue {
 
   public setFlushCallback(fn: () => Promise<void>): void {
     this.flushCallback = fn;
+    // Now that the callback is set, start the auto-flush timer.
+    // setupAutoFlush was already called in the constructor, but at that point
+    // flushCallback was undefined, so the timer was a no-op.
+    this.setupAutoFlush();
   }
 
   private loadFromStorage(): void {
@@ -319,7 +323,12 @@ export class MessageQueue {
 
     // Setup new timer
     this.flushTimer = setInterval(() => {
-      if (!this.isEmpty() && !this.flushing && this.flushCallback) {
+      if (
+        !this.isEmpty() &&
+        !this.flushing &&
+        this.flushCallback &&
+        (typeof navigator === "undefined" || navigator.onLine !== false)
+      ) {
         this.logger.log("Auto-flush triggered");
         this.flushCallback().catch((error) => {
           this.logger.error("Auto-flush failed:", error);

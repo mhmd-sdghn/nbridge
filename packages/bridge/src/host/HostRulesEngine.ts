@@ -259,6 +259,13 @@ export function defineHostRules<
 
   const engine: HostRules<TCaps, TVariants, TTraits> = {
     supports(name) {
+      // hasOwnProperty guards against prototype-inherited names ("constructor",
+      // "toString", ...) that would otherwise resolve to Object.prototype
+      // members and throw a TypeError in evaluateCapability instead of the
+      // documented fail-safe `false`.
+      if (!Object.hasOwn(compiledCapabilities, name as string)) {
+        return false;
+      }
       const capability = compiledCapabilities[name];
       if (capability === undefined) return false;
       return evaluateCapability(capability, current());
@@ -267,6 +274,9 @@ export function defineHostRules<
     variant<K extends VariantName<TVariants>>(
       name: K,
     ): VariantValue<TVariants[K]> {
+      if (!Object.hasOwn(compiledVariants, name as string)) {
+        throw new Error(`[nbridge] Unknown variant "${name}".`);
+      }
       const variant = compiledVariants[name];
       if (variant === undefined) {
         throw new Error(`[nbridge] Unknown variant "${name}".`);

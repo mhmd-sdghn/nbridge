@@ -9,11 +9,11 @@
 
 // Constants exports
 export { BridgeBackAction } from "./constants/backAction";
-export { MessagePriority } from "./constants/messagePriority";
 export {
-  BridgeMessageType,
-  type BridgeMessageTypeValue,
-} from "./constants/messageTypes";
+  MessagePriority,
+  type MessagePriorityName,
+  normalizePriority,
+} from "./constants/messagePriority";
 export { PROTOCOL } from "./constants/protocol";
 // Core exports
 export { BridgeManager, createBridge, getBridge } from "./core/BridgeManager";

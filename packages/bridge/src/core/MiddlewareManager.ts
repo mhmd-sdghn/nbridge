@@ -1,9 +1,4 @@
-import type {
-  BridgeMessage,
-  Middleware,
-  MiddlewareContext,
-  NextFunction,
-} from "../types";
+import type { BridgeMessage, Middleware, MiddlewareContext } from "../types";
 import type { BridgeLogger } from "../utils/helpers";
 
 export class MiddlewareManager {
@@ -21,41 +16,39 @@ export class MiddlewareManager {
     context: MiddlewareContext,
     finalHandler: (message: BridgeMessage) => Promise<void>,
   ): Promise<void> {
-    // If no middleware, call final handler directly
-    if (this.middlewares.length === 0) {
+    // Snapshot the chain so concurrent use()/clear() cannot corrupt this run.
+    const chain = this.middlewares.slice();
+    if (chain.length === 0) {
       return finalHandler(message);
     }
 
-    let index = 0;
-
-    // Create the next function that advances through the chain
-    const next: NextFunction = async (msg: BridgeMessage): Promise<void> => {
-      // If we've reached the end of middleware chain, call final handler
-      if (index >= this.middlewares.length) {
+    // Dispatch by explicit position rather than a shared mutable index. Each
+    // next() call runs the remainder of the chain from the caller's fixed
+    // position, so a middleware can never skip its siblings (the shared-index
+    // bug), and calling next() again (e.g. retryMiddleware re-driving the
+    // transport on failure) correctly re-runs downstream from the same point.
+    const dispatch = async (i: number, msg: BridgeMessage): Promise<void> => {
+      if (i >= chain.length) {
         return finalHandler(msg);
       }
 
-      // Get current middleware and increment index
-      const middleware = this.middlewares[index++];
+      const middleware = chain[i];
       if (!middleware) {
         return finalHandler(msg);
       }
 
       try {
-        // Execute middleware with message, context, and next
-        await middleware(msg, context, next);
+        await middleware(msg, context, (nextMsg) => dispatch(i + 1, nextMsg));
       } catch (error) {
-        // Log error and rethrow
         this.logger.error(
-          `Error in middleware ${index - 1} (${context.direction}):`,
+          `Error in middleware ${i} (${context.direction}):`,
           error,
         );
         throw error;
       }
     };
 
-    // Start the chain
-    return next(message);
+    return dispatch(0, message);
   }
 
   public async executeOutgoing(

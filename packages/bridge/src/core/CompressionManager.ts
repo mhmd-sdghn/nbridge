@@ -38,6 +38,16 @@ export class CompressionManager {
       const base64 = this.uint8ArrayToBase64(compressed);
       const compressedSize = new Blob([base64]).size;
 
+      // base64 adds ~33% overhead, so incompressible payloads (already-encoded
+      // images, random tokens) come out LARGER. Fall back to the uncompressed
+      // form rather than shipping a bigger wire message.
+      if (compressedSize >= originalSize) {
+        this.logger.log(
+          `Compression skipped: result (${compressedSize}B) not smaller than original (${originalSize}B)`,
+        );
+        return null;
+      }
+
       if (this.config.trackStats) {
         this.updateStats(originalSize, compressedSize);
       }

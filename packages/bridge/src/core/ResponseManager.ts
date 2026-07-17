@@ -25,23 +25,36 @@ export class ResponseManager {
     timeout: number = this.defaultTimeout,
   ): Promise<BridgeResponse> {
     return new Promise((resolve, reject) => {
-      const timeoutId = setTimeout(() => {
-        if (this.pendingResponses.has(messageId)) {
-          this.pendingResponses.delete(messageId);
+      // A duplicate id would orphan the earlier caller's promise; reject the
+      // old entry instead of silently overwriting it.
+      const existing = this.pendingResponses.get(messageId);
+      if (existing) {
+        clearTimeout(existing.timeoutId);
+        existing.reject(
+          new Error(`Duplicate message id "${messageId}" registered`),
+        );
+        this.pendingResponses.delete(messageId);
+      }
 
-          if (this.onTimeout) {
-            this.onTimeout(messageId);
-          }
-
-          reject(new Error(`Request timed out after ${timeout}ms`));
-        }
-      }, timeout);
-
-      this.pendingResponses.set(messageId, {
+      const entry: PendingResponse = {
         resolve,
         reject,
-        timeoutId,
-      });
+        timeoutId: setTimeout(() => {
+          // Only fire for our own registration (guards against a same-id
+          // entry replacing this one).
+          if (this.pendingResponses.get(messageId) === entry) {
+            this.pendingResponses.delete(messageId);
+
+            if (this.onTimeout) {
+              this.onTimeout(messageId);
+            }
+
+            reject(new Error(`Request timed out after ${timeout}ms`));
+          }
+        }, timeout),
+      };
+
+      this.pendingResponses.set(messageId, entry);
 
       this.logger.log(`Registered pending response for message: ${messageId}`);
     });
@@ -70,7 +83,7 @@ export class ResponseManager {
     return true;
   }
 
-  public reject(messageId: string, error: string): boolean {
+  public reject(messageId: string, error: Error | string): boolean {
     const pending = this.pendingResponses.get(messageId);
 
     if (!pending) {
@@ -80,7 +93,7 @@ export class ResponseManager {
 
     clearTimeout(pending.timeoutId);
 
-    pending.reject(new Error(error));
+    pending.reject(error instanceof Error ? error : new Error(error));
     this.pendingResponses.delete(messageId);
 
     this.logger.log(`Rejected pending response for message: ${messageId}`);
@@ -96,11 +109,8 @@ export class ResponseManager {
   }
 
   public clear(): void {
-    for (const pending of this.pendingResponses.values()) {
-      clearTimeout(pending.timeoutId);
-    }
-
     for (const [messageId, pending] of this.pendingResponses.entries()) {
+      clearTimeout(pending.timeoutId);
       pending.reject(new Error("Bridge destroyed"));
       this.logger.log(`Cleared pending response: ${messageId}`);
     }

@@ -26,9 +26,16 @@ export interface VersionFromQueryOptions {
   /**
    * sessionStorage key used to persist the version across client-side
    * navigation that drops the query param.
-   * @default "nbridge:host-version"
+   * @default "nbridge:host-version" for the canonical "hv" param, otherwise
+   *   "nbridge:host-version:<param>" (param-scoped to avoid cross-app collisions)
    */
   storageKey?: string;
+  /**
+   * Persist the value to sessionStorage so it survives client-side navigation
+   * that drops the query param. Set `false` to read only the current URL.
+   * @default true
+   */
+  persist?: boolean;
 }
 
 /** Options for {@link traitFromQuery}. */
@@ -96,10 +103,15 @@ export function versionFromQuery(
   param = "hv",
   options: VersionFromQueryOptions = {},
 ): HostVersionSource {
+  // Param-scoped default key so two engines on one origin using different
+  // params ("appAv", "appBv") do not collide in sessionStorage. The canonical
+  // "hv" param keeps the historical unscoped key for back-compat.
+  const defaultKey =
+    param === "hv" ? VERSION_STORAGE_KEY : `${VERSION_STORAGE_KEY}:${param}`;
   return queryParamSource(
     param,
-    options.storageKey ?? VERSION_STORAGE_KEY,
-    true,
+    options.storageKey ?? defaultKey,
+    options.persist ?? true,
   );
 }
 

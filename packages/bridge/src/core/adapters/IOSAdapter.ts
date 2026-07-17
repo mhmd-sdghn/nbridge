@@ -2,11 +2,14 @@ import type { BridgeMessage } from "../../types";
 import {
   attachSendBridgeMessageFnToWindow,
   type BridgeLogger,
+  type SendBridgeMessageFn,
 } from "../../utils/helpers";
 import { hasIOSBridge } from "../../utils/platform";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
 export class IOSAdapter implements IPlatformAdapter {
+  private attachedFunction?: SendBridgeMessageFn;
+
   constructor(
     private handlerName: string,
     private logger?: BridgeLogger,
@@ -22,7 +25,10 @@ export class IOSAdapter implements IPlatformAdapter {
 
   public initialize(onMessage: (message: BridgeMessage) => void): void {
     if (typeof window === "undefined") return;
-    attachSendBridgeMessageFnToWindow(onMessage, this.logger);
+    this.attachedFunction = attachSendBridgeMessageFnToWindow(
+      onMessage,
+      this.logger,
+    );
   }
 
   public send(message: BridgeMessage): void {
@@ -55,8 +61,12 @@ export class IOSAdapter implements IPlatformAdapter {
   }
 
   public destroy(): void {
-    if (typeof window !== "undefined") {
-      delete (window as unknown as Record<string, unknown>).sendBridgeMessage;
+    if (typeof window !== "undefined" && this.attachedFunction) {
+      const current = (window as unknown as Record<string, unknown>)
+        .sendBridgeMessage;
+      if (current === this.attachedFunction) {
+        delete (window as unknown as Record<string, unknown>).sendBridgeMessage;
+      }
     }
   }
 }

@@ -1,5 +1,5 @@
 import type { BridgeMessage } from "../../types";
-import { type BridgeLogger, isValidMessage } from "../../utils/helpers";
+import { type BridgeLogger, isBridgeEnvelope } from "../../utils/helpers";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
 /**
@@ -67,8 +67,19 @@ export class WebAdapter implements IPlatformAdapter {
   }
 
   private parseMessage(data: unknown): BridgeMessage | null {
-    if (typeof data === "object" && data !== null && isValidMessage(data)) {
+    if (typeof data === "object" && data !== null && isBridgeEnvelope(data)) {
       return data;
+    }
+    // Native shells and test harnesses may deliver JSON strings.
+    if (typeof data === "string") {
+      try {
+        const parsed = JSON.parse(data);
+        if (isBridgeEnvelope(parsed)) {
+          return parsed;
+        }
+      } catch {
+        // Not valid JSON
+      }
     }
     return null;
   }

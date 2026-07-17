@@ -217,22 +217,25 @@ class BackInterceptManager {
     if (isTrap) return;
 
     // Pressed back FROM the trap entry to the real page.
-    // Re-push trap to keep intercepting future presses.
-    this.pushTrap();
-
     const entry = this.findBestActiveEntry(currentPath);
 
     if (entry) {
+      // Re-push the trap to keep intercepting future presses, then fire.
+      this.pushTrap();
       entry.onBackCallback();
       this.syncTrap();
       return;
     }
 
-    // No active intercept found — pop the trap we just pushed so natural
-    // navigation proceeds; syncTrap tears the listener down once it lands.
-    this.popTrapSilently();
+    // Active intercepts exist, but none match the CURRENT path (e.g. a
+    // path-scoped intercept armed from a persistent layout while the user is on
+    // a different page). Do NOT re-push the trap and do NOT swallow the press:
+    // complete the user's original back intent. Tear the listener down first so
+    // the resulting popstate is not misread; syncTrap re-arms on the next
+    // (re)registration.
+    this.teardownListener();
+    window.history.back();
   }
 }
 
 export { BackInterceptManager };
-export const backInterceptManager = BackInterceptManager.getInstance;

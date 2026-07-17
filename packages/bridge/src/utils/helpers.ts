@@ -20,16 +20,31 @@ export function createMessage<T = unknown>(
     payload,
     id: id || generateMessageId(),
     timestamp: Date.now(),
+    __nbridge: 1,
   };
 }
 
-export function createTimeoutPromise(
-  timeout: number,
-  message = "Operation timed out",
-): Promise<never> {
-  return new Promise((_, reject) => {
-    setTimeout(() => reject(new Error(message)), timeout);
-  });
+export function isValidMessage(value: unknown): value is BridgeMessage {
+  if (
+    typeof value !== "object" ||
+    value === null ||
+    typeof (value as BridgeMessage).type !== "string"
+  ) {
+    return false;
+  }
+  const id = (value as BridgeMessage).id;
+  return id === undefined || typeof id === "string";
+}
+
+/**
+ * Stricter check for postMessage-based transports (iframe/web): requires the
+ * `__nbridge` discriminator so unrelated same-window `{ type: ... }` traffic
+ * (devservers, analytics SDKs, extensions) is never dispatched into bridge
+ * handlers. Native WebView transports keep the lenient `isValidMessage` for
+ * backward compatibility with existing hosts.
+ */
+export function isBridgeEnvelope(value: unknown): value is BridgeMessage {
+  return isValidMessage(value) && (value as BridgeMessage).__nbridge === 1;
 }
 
 export function safeStringify(value: unknown): string {
@@ -53,22 +68,21 @@ export function safeParse<T = unknown>(value: string | unknown): T | null {
   }
 }
 
-export function isValidMessage(value: unknown): value is BridgeMessage {
-  return (
-    typeof value === "object" &&
-    value !== null &&
-    "type" in value &&
-    typeof (value as BridgeMessage).type === "string"
-  );
-}
+export type SendBridgeMessageFn = (messageJson: string | BridgeMessage) => void;
 
 export function attachSendBridgeMessageFnToWindow(
   onMessage: (message: BridgeMessage) => void,
   logger?: BridgeLogger,
-): void {
-  (window as unknown as Record<string, unknown>).sendBridgeMessage = (
-    messageJson: string | BridgeMessage,
-  ) => {
+): SendBridgeMessageFn {
+  const existing = (window as unknown as Record<string, unknown>)
+    .sendBridgeMessage;
+  if (existing && typeof existing === "function") {
+    logger?.warn(
+      "[nbridge] window.sendBridgeMessage already exists; overwriting (previous bridge instance will stop receiving messages)",
+    );
+  }
+
+  const fn = (messageJson: string | BridgeMessage) => {
     try {
       const message = safeParse<BridgeMessage>(messageJson);
       if (!message || !isValidMessage(message)) {
@@ -80,6 +94,9 @@ export function attachSendBridgeMessageFnToWindow(
       logger?.error("Bridge receive error:", e);
     }
   };
+
+  (window as unknown as Record<string, unknown>).sendBridgeMessage = fn;
+  return fn;
 }
 
 export class BridgeLogger {
@@ -108,6 +125,11 @@ export class BridgeLogger {
       case "devtools":
         if (this.logCallback) {
           this.logCallback(level, message, timestamp);
+        } else if (level === "error") {
+          // No devtools collector registered (devTools disabled): errors must
+          // still surface somewhere, otherwise the default config swallows
+          // every failure the library catches.
+          this.logToConsole(level, message);
         }
         break;
       case "both":

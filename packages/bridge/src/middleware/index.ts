@@ -95,14 +95,22 @@ export function filterMiddleware(
 }
 
 /**
- * Retry middleware
- * Retries failed messages (outgoing only)
+ * Retry middleware.
+ *
+ * On failure it calls `next()` again, which re-runs the rest of the chain from
+ * this position. Register it LAST (closest to the transport) so a retry re-runs
+ * only the transport, not the middlewares before it. Outgoing-only: retrying an
+ * inbound message would re-run downstream handlers and duplicate side effects.
  */
 export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
-  return async (message, _context, next) => {
-    let attempt = 0;
+  return async (message, context, next) => {
+    if (context.direction !== "outgoing") {
+      await next(message);
+      return;
+    }
 
-    while (attempt <= maxRetries) {
+    let attempt = 0;
+    for (;;) {
       try {
         await next(message);
         return; // Success
@@ -111,8 +119,6 @@ export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
         if (attempt > maxRetries) {
           throw error; // Max retries exceeded
         }
-
-        // Wait before retry
         await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
       }
     }
@@ -121,24 +127,26 @@ export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
 
 /**
  * Throttle middleware
- * Limits the rate of messages
+ * Limits the rate of messages. Burst-safe: N concurrent messages are spaced
+ * `minInterval` apart rather than all measuring the same stale timestamp and
+ * releasing together.
  */
 export function throttleMiddleware(messagesPerSecond: number): Middleware {
-  let lastMessageTime = 0;
   const minInterval = 1000 / messagesPerSecond;
+  // The timestamp the NEXT message is allowed to go out. Reserving a slot
+  // synchronously (before the await) serializes concurrent callers.
+  let nextAllowedTime = 0;
 
   return async (message, _context, next) => {
     const now = Date.now();
-    const timeSinceLastMessage = now - lastMessageTime;
+    const scheduledTime = Math.max(now, nextAllowedTime);
+    nextAllowedTime = scheduledTime + minInterval;
 
-    if (timeSinceLastMessage < minInterval) {
-      // Wait before sending
-      await new Promise((resolve) =>
-        setTimeout(resolve, minInterval - timeSinceLastMessage),
-      );
+    const delay = scheduledTime - now;
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
-    lastMessageTime = Date.now();
     await next(message);
   };
 }
@@ -147,28 +155,34 @@ export function throttleMiddleware(messagesPerSecond: number): Middleware {
  * Encryption middleware
  * Encrypts outgoing messages, decrypts incoming messages
  */
+const ENCRYPTED_MARKER = "__nbridgeEncrypted";
+
 export function encryptionMiddleware(
   encrypt: (data: unknown) => Promise<string> | string,
   decrypt: (encrypted: string) => Promise<unknown> | unknown,
 ): Middleware {
   return async (message, context, next) => {
     if (context.direction === "outgoing") {
-      // Encrypt payload
       const encrypted = await encrypt(message.payload);
       await next({
         ...message,
-        payload: { encrypted },
+        // Tagged envelope so the incoming side only decrypts envelopes this
+        // middleware produced, never an arbitrary user payload that happens to
+        // have an `encrypted` field.
+        payload: { [ENCRYPTED_MARKER]: true, encrypted },
       });
     } else {
-      // Decrypt payload
+      const payload = message.payload as
+        | { [ENCRYPTED_MARKER]?: unknown; encrypted?: string }
+        | null
+        | undefined;
       if (
-        message.payload &&
-        typeof message.payload === "object" &&
-        "encrypted" in message.payload
+        payload &&
+        typeof payload === "object" &&
+        payload[ENCRYPTED_MARKER] === true &&
+        typeof payload.encrypted === "string"
       ) {
-        const decrypted = await decrypt(
-          (message.payload as { encrypted: string }).encrypted,
-        );
+        const decrypted = await decrypt(payload.encrypted);
         await next({
           ...message,
           payload: decrypted,

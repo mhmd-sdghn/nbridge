@@ -22,11 +22,13 @@ export function isIframe(): boolean {
 
 export function hasAndroidBridge(interfaceName = "AndroidBridge"): boolean {
   if (typeof window === "undefined") return false;
-  return (
-    interfaceName in window &&
-    typeof (window as unknown as Record<string, unknown>)[interfaceName] ===
-      "object"
-  );
+  const candidate = (window as unknown as Record<string, unknown>)[
+    interfaceName
+  ] as { postMessage?: unknown } | undefined;
+  // Require a callable postMessage: a bare object (or a DOM element exposed via
+  // window[id] named-property access, e.g. <div id="AndroidBridge">) is not a
+  // real WebView bridge and must not hijack platform detection.
+  return typeof candidate?.postMessage === "function";
 }
 
 export function hasIOSBridge(handlerName = "iosBridge"): boolean {

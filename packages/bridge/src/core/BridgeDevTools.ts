@@ -14,7 +14,7 @@ import type {
   QueueStats,
 } from "../types";
 import type { SchemaRegistry } from "../types/schema";
-import { isProductionEnv } from "../utils/env";
+import { isProductionEnvOrUnknown } from "../utils/env";
 import type { BridgeLogger } from "../utils/helpers";
 
 type ConsoleMethod = "log" | "error" | "warn" | "info" | "debug";
@@ -38,6 +38,8 @@ export class BridgeDevTools {
     options?: BridgeSendOptions,
   ) => Promise<BridgeResponse>;
   private originalConsole: Record<ConsoleMethod, (...args: unknown[]) => void>;
+  /** The API object this instance installed on window.__BRIDGE_DEVTOOLS__ (ownership marker). */
+  private windowAPI?: NonNullable<Window["__BRIDGE_DEVTOOLS__"]>;
 
   constructor(
     private logger: BridgeLogger,
@@ -53,12 +55,14 @@ export class BridgeDevTools {
     };
 
     if (this.enabled && typeof window !== "undefined") {
-      if (isProductionEnv()) {
+      if (isProductionEnvOrUnknown()) {
         // Don't patch console or collect logs in production builds — there
-        // would be no inspection API to read them anyway.
+        // would be no inspection API to read them anyway. Fail closed: if the
+        // environment cannot be positively identified as dev/test, treat it as
+        // production so a plain <script> page never runs console patching.
         this.enabled = false;
         this.logger.warn(
-          "BridgeDevTools: disabled in production builds. Build with NODE_ENV=development to enable.",
+          "BridgeDevTools: disabled outside a confirmed development build. Set NODE_ENV=development (or import.meta.env.DEV) to enable.",
         );
         return;
       }
@@ -74,8 +78,10 @@ export class BridgeDevTools {
    */
   public setEnabled(enabled: boolean): void {
     if (enabled === this.enabled) return;
-    if (enabled && isProductionEnv()) {
-      this.logger.warn("BridgeDevTools: cannot enable in production builds");
+    if (enabled && isProductionEnvOrUnknown()) {
+      this.logger.warn(
+        "BridgeDevTools: cannot enable outside a confirmed development build",
+      );
       return;
     }
 
@@ -94,7 +100,7 @@ export class BridgeDevTools {
 
   private initializeWindowAPI(): void {
     if (typeof window === "undefined") return;
-    window.__BRIDGE_DEVTOOLS__ = {
+    this.windowAPI = {
       getMessages: () => this.getMessages(),
       getLogs: () => this.getLogs(),
       getMetrics: () => this.getMetricsInternal(),
@@ -112,6 +118,12 @@ export class BridgeDevTools {
       clearLogs: () => this.clearLogs(),
       setEnabled: (enabled: boolean) => this.setEnabled(enabled),
     };
+    if (window.__BRIDGE_DEVTOOLS__) {
+      this.logger.warn(
+        "DevTools: window.__BRIDGE_DEVTOOLS__ already exists (another bridge instance?) — overwriting",
+      );
+    }
+    window.__BRIDGE_DEVTOOLS__ = this.windowAPI;
   }
 
   private interceptConsole(): void {
@@ -285,11 +297,20 @@ export class BridgeDevTools {
   public destroy(): void {
     this.clear();
     this.logs = [];
+    this.enabled = false;
     this.restoreConsole();
 
-    if (typeof window !== "undefined" && window.__BRIDGE_DEVTOOLS__) {
+    // Only delete the global if it is still ours: another instance may have
+    // installed its own API since (last-writer-wins), and deleting theirs
+    // would sever a live devtools panel.
+    if (
+      typeof window !== "undefined" &&
+      this.windowAPI &&
+      window.__BRIDGE_DEVTOOLS__ === this.windowAPI
+    ) {
       delete window.__BRIDGE_DEVTOOLS__;
     }
+    this.windowAPI = undefined;
 
     this.logger.info("DevTools destroyed");
   }

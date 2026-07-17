@@ -1,5 +1,12 @@
-import { MessagePriority } from "../constants/messagePriority";
-import { isProtocolType, PROTOCOL } from "../constants/protocol";
+import { normalizePriority } from "../constants/messagePriority";
+import {
+  ERROR_SUFFIX,
+  isErrorResponseType,
+  isProtocolType,
+  isResponseType,
+  PROTOCOL,
+  RESPONSE_SUFFIX,
+} from "../constants/protocol";
 import type {
   BatchStats,
   BridgeConfig,
@@ -37,6 +44,7 @@ import { MessageHandler } from "./MessageHandler";
 import { MessageQueue } from "./MessageQueue";
 import { MetricsCollector } from "./MetricsCollector";
 import { MiddlewareManager } from "./MiddlewareManager";
+import { normalizeConfig, type ResolvedBridgeConfig } from "./normalizeConfig";
 import { PlatformDetector } from "./PlatformDetector";
 import { ResponseManager } from "./ResponseManager";
 import { validateWithSchema } from "./validate";
@@ -70,7 +78,7 @@ export class BridgeManager<
   private readonly devTools: BridgeDevTools | null = null;
   private platformDetector: PlatformDetector;
   private readonly logger: BridgeLogger;
-  private config: Required<BridgeConfig<TSchemas>>;
+  private config: ResolvedBridgeConfig<TSchemas>;
   private readonly schemas?: TSchemas;
 
   private ready = false;
@@ -79,59 +87,16 @@ export class BridgeManager<
   private readyWaiters: ReadyWaiter[] = [];
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private onlineListener: (() => void) | null = null;
+  private isFlushing = false;
 
   constructor(config: BridgeConfig<TSchemas> = {}) {
     this.schemas = config.schemas;
+    this.config = normalizeConfig(config);
 
-    this.config = {
-      debug: config.debug ?? false,
-      defaultTimeout: config.defaultTimeout ?? 5000,
-      androidInterface: config.androidInterface ?? "AndroidBridge",
-      iosHandler: config.iosHandler ?? "iosBridge",
-      schemas: config.schemas as TSchemas,
-      handshake: {
-        enabled: config.handshake?.enabled ?? false,
-        timeout: config.handshake?.timeout ?? 10000,
-        retryInterval: config.handshake?.retryInterval ?? 500,
-      },
-      middleware: config.middleware ?? { enabled: true },
-      compression: {
-        enabled: config.compression?.enabled ?? false,
-        algorithm: config.compression?.algorithm ?? "deflate",
-        threshold: config.compression?.threshold ?? 1024,
-        trackStats: config.compression?.trackStats ?? true,
-      },
-      queue: config.queue ?? {
-        enabled: false,
-        maxSize: 100,
-        persist: false,
-        storageKey: "nbridge-queue",
-        autoFlush: true,
-        flushInterval: 5000,
-      },
-      batching: config.batching ?? {
-        enabled: false,
-        maxSize: 10,
-        maxWait: 100,
-      },
-      metrics: config.metrics ?? {
-        enabled: false,
-        updateInterval: 1000,
-        detailedTiming: false,
-      },
-      devTools: config.devTools ?? {
-        enabled: false,
-        maxMessageHistory: 50,
-        logDestination: "devtools",
-        maxConsoleLogEntries: 100,
-      },
-      webLoopback: config.webLoopback ?? false,
-      // intentionally undefined when not configured; IframeAdapter handles this
-      iframeParentOrigin: config.iframeParentOrigin as string,
-    };
-
-    const logDestination = this.config.devTools.logDestination || "devtools";
-    this.logger = new BridgeLogger(this.config.debug, logDestination);
+    this.logger = new BridgeLogger(
+      this.config.debug,
+      this.config.devTools.logDestination,
+    );
     this.messageHandler = new MessageHandler(this.logger);
     this.responseManager = new ResponseManager(
       this.logger,
@@ -141,38 +106,55 @@ export class BridgeManager<
 
     this.compressionManager = new CompressionManager(
       this.logger,
-      this.config.compression as Required<typeof this.config.compression>,
+      this.config.compression,
     );
 
     if (this.config.queue.enabled) {
-      this.messageQueue = new MessageQueue(
-        this.logger,
-        this.config.queue as Required<typeof this.config.queue>,
-      );
+      this.messageQueue = new MessageQueue(this.logger, this.config.queue);
     }
 
     if (this.config.batching.enabled) {
-      this.batchManager = new BatchManager(
-        this.logger,
-        this.config.batching as Required<typeof this.config.batching>,
-      );
+      this.batchManager = new BatchManager(this.logger, this.config.batching);
       this.batchManager.setFlushCallback(async (batch) => {
-        await this.sendOutgoing(batch);
+        try {
+          await this.sendOutgoing(batch);
+        } catch (error) {
+          // Batch envelope failed to send. If a queue is configured, unbatch
+          // and enqueue each member message so they survive offline/retry.
+          const members = (
+            batch.payload as { messages?: BridgeMessage[] } | undefined
+          )?.messages;
+          if (this.messageQueue && members) {
+            this.logger.warn(
+              `Batch send failed — unbatching ${members.length} messages for retry`,
+            );
+            let allEnqueued = true;
+            for (const msg of members) {
+              if (!this.enqueue(msg, undefined)) {
+                allEnqueued = false;
+              }
+            }
+            if (!allEnqueued) {
+              this.logger.error(
+                "Some batch messages could not be enqueued (queue full)",
+              );
+            }
+          } else {
+            throw error;
+          }
+        }
       });
     }
 
     if (this.config.metrics.enabled) {
       this.metricsCollector = new MetricsCollector(
         this.logger,
-        this.config.metrics as Required<typeof this.config.metrics>,
+        this.config.metrics,
       );
     }
 
     if (this.config.devTools.enabled) {
-      this.devTools = new BridgeDevTools(
-        this.logger,
-        this.config.devTools as Required<typeof this.config.devTools>,
-      );
+      this.devTools = new BridgeDevTools(this.logger, this.config.devTools);
 
       this.logger.setLogCallback((level, message, timestamp) => {
         this.devTools?.addLog(level, message, timestamp);
@@ -362,22 +344,61 @@ export class BridgeManager<
       wireSize(message),
     );
 
-    let incoming = message;
-    if (incoming.__compressed && typeof incoming.payload === "string") {
-      const payload = this.compressionManager.decompress(incoming.payload);
-      incoming = { ...incoming, payload, __compressed: undefined };
+    let incoming: BridgeMessage;
+    try {
+      incoming = this.maybeDecompress(message);
+    } catch (error) {
+      // A corrupt compressed response would otherwise strand the caller
+      // until timeout; reject the pending request immediately.
+      this.rejectPendingForBrokenMessage(message, error);
+      throw error;
     }
 
-    if (this.config.middleware?.enabled) {
-      await this.middlewareManager.executeIncoming(
-        incoming,
-        async (processedMessage) => {
-          await this.processIncomingMessage(processedMessage);
-        },
-        this,
+    try {
+      if (this.config.middleware.enabled) {
+        await this.middlewareManager.executeIncoming(
+          incoming,
+          async (processedMessage) => {
+            await this.processIncomingMessage(processedMessage);
+          },
+          this,
+        );
+      } else {
+        await this.processIncomingMessage(incoming);
+      }
+    } catch (error) {
+      this.rejectPendingForBrokenMessage(incoming, error);
+      throw error;
+    }
+  }
+
+  /** Decompress a `__compressed` payload; pass through everything else. */
+  private maybeDecompress(message: BridgeMessage): BridgeMessage {
+    if (message.__compressed && typeof message.payload === "string") {
+      const payload = this.compressionManager.decompress(message.payload);
+      return { ...message, payload, __compressed: undefined };
+    }
+    return message;
+  }
+
+  /**
+   * When processing of an incoming reply fails (corrupt compression,
+   * middleware error), fail the matching pending request instead of letting
+   * it time out with no diagnostic.
+   */
+  private rejectPendingForBrokenMessage(
+    message: BridgeMessage,
+    error: unknown,
+  ): void {
+    if (
+      message.id &&
+      isResponseType(message.type) &&
+      this.responseManager.has(message.id)
+    ) {
+      this.responseManager.reject(
+        message.id,
+        error instanceof Error ? error : new Error(String(error)),
       );
-    } else {
-      await this.processIncomingMessage(incoming);
     }
   }
 
@@ -388,19 +409,30 @@ export class BridgeManager<
       if (Array.isArray(entries)) {
         for (const entry of entries) {
           if (isValidMessage(entry)) {
-            await this.processIncomingMessage(entry);
+            // Entries may be individually compressed by the host.
+            await this.processIncomingMessage(this.maybeDecompress(entry));
           }
         }
       }
       return;
     }
 
-    const isResponse =
-      message.type.endsWith("_response") || message.type.endsWith("_error");
-
-    if (isResponse && message.id && this.responseManager.has(message.id)) {
-      this.responseManager.resolve(message.id, message.payload);
-      return;
+    if (message.id && isResponseType(message.type)) {
+      if (this.responseManager.has(message.id)) {
+        if (isErrorResponseType(message.type)) {
+          const errorText =
+            typeof (message.payload as { error?: unknown })?.error === "string"
+              ? ((message.payload as { error: string }).error as string)
+              : `Request "${message.type.slice(0, -ERROR_SUFFIX.length)}" failed`;
+          this.responseManager.reject(message.id, new Error(errorText));
+        } else {
+          this.responseManager.resolve(message.id, message.payload);
+        }
+        return;
+      }
+      // A reply-shaped type with an unknown id falls through to normal
+      // dispatch: consumer event types ending in `_response`/`_error` are
+      // legal as long as their ids don't collide with a pending request.
     }
     await this.messageHandler.dispatch(message);
   }
@@ -439,6 +471,10 @@ export class BridgeManager<
     payload?: T,
     options: BridgeSendOptions = {},
   ): Promise<BridgeResponse> {
+    if (this.destroyed) {
+      throw new Error(`Cannot send "${type}": bridge has been destroyed`);
+    }
+
     let outgoingPayload: unknown = payload;
 
     if (this.schemas && type in this.schemas) {
@@ -474,8 +510,11 @@ export class BridgeManager<
       } catch (error) {
         this.responseManager.reject(
           message.id,
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error : new Error(String(error)),
         );
+        // The rejected promise is never returned; mark it handled so the
+        // failure surfaces only through the throw below.
+        responsePromise.catch(() => {});
         throw error;
       }
 
@@ -564,14 +603,20 @@ export class BridgeManager<
       this.messageQueue &&
       typeof navigator !== "undefined" &&
       navigator.onLine === false &&
-      !isProtocolType(message.type)
+      !isProtocolType(message.type) &&
+      !this.isFlushing
     ) {
-      this.enqueue(message, options);
+      const enqueued = this.enqueue(message, options);
+      if (!enqueued) {
+        throw new Error(
+          `Cannot send message "${message.type}" while offline: queue is full`,
+        );
+      }
       return;
     }
 
     try {
-      if (this.config.middleware?.enabled) {
+      if (this.config.middleware.enabled) {
         await this.middlewareManager.executeOutgoing(
           message,
           async (processedMessage) => {
@@ -585,21 +630,38 @@ export class BridgeManager<
     } catch (error) {
       this.metricsCollector?.recordFailed(message.id ?? message.type);
 
-      if (this.messageQueue && !isProtocolType(message.type)) {
-        this.logger.warn(
-          `Send failed for "${message.type}" — queued for retry`,
-        );
-        this.enqueue(message, options);
-        return;
+      if (
+        this.messageQueue &&
+        !isProtocolType(message.type) &&
+        !this.isFlushing
+      ) {
+        const enqueued = this.enqueue(message, options);
+        if (enqueued) {
+          this.logger.warn(
+            `Send failed for "${message.type}" — queued for retry`,
+          );
+          return;
+        }
+        // Queue is full, let the error propagate
       }
 
       throw error;
     }
   }
 
-  private enqueue(message: BridgeMessage, options?: BridgeSendOptions): void {
-    const priority = MessagePriority[options?.priority ?? "NORMAL"];
-    this.messageQueue?.enqueue(message, options, priority);
+  private enqueue(
+    message: BridgeMessage,
+    options?: BridgeSendOptions,
+  ): boolean {
+    const priority = normalizePriority(options?.priority);
+    const enqueued = this.messageQueue?.enqueue(message, options, priority);
+    if (!enqueued) {
+      this.metricsCollector?.recordFailed(message.id ?? message.type);
+      this.logger.error(
+        `Failed to enqueue message "${message.type}" — queue full or disabled`,
+      );
+    }
+    return enqueued ?? false;
   }
 
   private sendMessageToAdapter(message: BridgeMessage): void {
@@ -704,7 +766,7 @@ export class BridgeManager<
 
         if (message.id) {
           const responseMessage = createMessage(
-            `${type}_response`,
+            `${type}${RESPONSE_SUFFIX}`,
             result,
             message.id,
           );
@@ -715,9 +777,9 @@ export class BridgeManager<
 
         if (message.id) {
           const errorMessage = createMessage(
-            `${type}_error`,
+            `${type}${ERROR_SUFFIX}`,
             {
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: error instanceof Error ? error.message : String(error),
             },
             message.id,
           );
@@ -744,6 +806,7 @@ export class BridgeManager<
     this.middlewareManager.use(middleware);
   }
 
+  /** @deprecated Use `use()` — this is an exact alias kept for compatibility. */
   public addMiddleware(middleware: Middleware): void {
     this.use(middleware);
   }
@@ -769,13 +832,26 @@ export class BridgeManager<
   }
 
   public async flushQueue(): Promise<void> {
-    if (this.messageQueue) {
-      await this.messageQueue.flush(async (message) => {
-        // Queued messages already passed validation and middleware once;
-        // deliver them straight to the adapter so a middleware chain that
-        // stamps metadata does not run twice.
-        this.sendMessageToAdapter(message);
+    if (!this.messageQueue) {
+      return;
+    }
+    if (this.isFlushing) {
+      this.logger.warn("Flush already in progress, skipping");
+      return;
+    }
+    this.isFlushing = true;
+    try {
+      await this.messageQueue.flush(async (message, options) => {
+        // Re-run through sendOutgoing so middleware applies.
+        // Offline-queued messages never saw middleware (they were enqueued
+        // before the middleware chain at line 580); adapter-failure-queued
+        // messages did see middleware, but idempotent middleware (logging,
+        // metadata stamping) is safe to re-run, and stateful middleware
+        // (encryption, signing) needs a fresh run with current keys/nonces.
+        await this.sendOutgoing(message, options);
       });
+    } finally {
+      this.isFlushing = false;
     }
   }
 
@@ -788,10 +864,12 @@ export class BridgeManager<
   }
 
   /**
-   * Flush any pending batched messages to the wire immediately.
+   * Flush any pending batched messages to the wire immediately. Resolves once
+   * the batch envelope has actually been sent, and rejects if the send fails
+   * (useful for flush-before-navigation).
    */
-  public async batch(): Promise<void> {
-    this.batchManager?.flush();
+  public async flushBatch(): Promise<void> {
+    await this.batchManager?.flush();
   }
 
   public getMetrics(): BridgeMetrics | null {
@@ -888,11 +966,20 @@ export class BridgeManager<
 
     this.compressionManager.destroy();
     this.messageQueue?.destroy();
+    // Flush pending batched messages before tearing down so they are not
+    // silently dropped (best-effort: destroy() is sync, so we fire the flush
+    // and swallow rejection; the adapter is still alive at this point).
+    this.batchManager?.flush().catch(() => {});
     this.batchManager?.destroy();
     this.metricsCollector?.destroy();
     this.devTools?.destroy();
 
     this.ready = false;
+
+    // Reset singleton if this instance is the current one
+    if (bridgeInstance === this) {
+      bridgeInstance = null;
+    }
 
     this.logger.info("Bridge destroyed");
   }
@@ -904,6 +991,11 @@ let bridgeInstance: BridgeManager<any> | null = null;
 export function getBridge<
   TSchemas extends SchemaRegistry | undefined = undefined,
 >(config?: BridgeConfig<TSchemas>): BridgeManager<TSchemas> {
+  if (bridgeInstance && config) {
+    console.warn(
+      "[nbridge] getBridge() called with config, but an instance already exists. Config is ignored. Use createBridge() to create a new instance, or destroy() the existing one first.",
+    );
+  }
   if (!bridgeInstance) {
     bridgeInstance = new BridgeManager(config);
   }

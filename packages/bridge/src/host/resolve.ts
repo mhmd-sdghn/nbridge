@@ -92,7 +92,9 @@ function resolveTrait(
   isServer: boolean,
 ): string | null {
   const { override, explicitTraits, traitSources } = options;
-  if (override?.traits && name in override.traits) {
+  // Value semantics: an explicit `undefined` means "no override" (fall through
+  // to the source); use `null` to force the trait to unknown.
+  if (override?.traits && override.traits[name] !== undefined) {
     return override.traits[name] ?? null;
   }
   if (isServer) return null;
@@ -122,7 +124,9 @@ export function resolveHost(options: ResolveOptions): ResolvedHost {
   }
 
   let versionRaw: string | null;
-  if (override && "version" in override) {
+  // Value semantics: `version: undefined` means "no override" (fall through to
+  // the source); `version: null` forces the version to unknown.
+  if (override && override.version !== undefined) {
     versionRaw = override.version ?? null;
   } else if (isServer) {
     versionRaw = null;
@@ -139,9 +143,12 @@ export function resolveHost(options: ResolveOptions): ResolvedHost {
     traits[name] = resolveTrait(name, options, isServer);
   }
   // A trait present only in an override (not declared) still takes effect.
+  // Skip keys explicitly set to undefined (value semantics: undefined == absent).
   if (override?.traits) {
     for (const name of Object.keys(override.traits)) {
-      if (!(name in traits)) traits[name] = override.traits[name] ?? null;
+      if (override.traits[name] !== undefined && !(name in traits)) {
+        traits[name] = override.traits[name] ?? null;
+      }
     }
   }
 

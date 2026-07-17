@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import { RESPONSE_SUFFIX } from "../constants/protocol";
 import { createBridge } from "../core/BridgeManager";
 import type {
   BridgeConfig,
@@ -30,6 +31,21 @@ export interface BridgeReadyState {
   error: Error | null;
 }
 
+/** Guards against accidental repeat factory calls (see createBridgeHooks JSDoc). */
+let factoryCalled = false;
+
+/** Shallow value-equality for QueueStats so polling avoids no-op re-renders. */
+function queueStatsEqual(a: QueueStats | null, b: QueueStats | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.size === b.size &&
+    a.pending === b.pending &&
+    a.failed === b.failed &&
+    a.completed === b.completed
+  );
+}
+
 /**
  * Factory that creates a typed bridge instance and returns hooks bound to it.
  * No React Provider or context needed — hooks close over the bridge instance
@@ -49,6 +65,13 @@ export interface BridgeReadyState {
 export function createBridgeHooks<
   TSchemas extends SchemaRegistry | undefined = undefined,
 >(options: CreateBridgeHooksOptions<TSchemas> = {}) {
+  if (factoryCalled) {
+    console.warn(
+      "[nbridge] createBridgeHooks() called more than once. Each call creates an independent bridge instance, and native adapters share one window.sendBridgeMessage receive channel — the newest instance takes it over and earlier instances stop receiving. Call the factory once at module scope and share its hooks.",
+    );
+  }
+  factoryCalled = true;
+
   const bridge = createBridge<TSchemas>(options.config);
 
   // ── useBridgeSend ──────────────────────────────────────────────────────────
@@ -162,13 +185,24 @@ export function createBridgeHooks<
         : never
       : unknown,
   ) {
-    // biome-ignore lint/suspicious/noExplicitAny: Type is inferred from schema
-    const [payload, setPayload] = useState<any>(initialValue);
-    const [message, setMessage] = useState<BridgeMessage | null>(null);
+    type StatePayload = TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : unknown
+      : unknown;
+
+    // Carry the schema-derived payload type through to the returned value so
+    // consumers get real typing at the point of use, not `any`.
+    const [payload, setPayload] = useState<StatePayload | undefined>(
+      initialValue as StatePayload | undefined,
+    );
+    const [message, setMessage] = useState<BridgeMessage<StatePayload> | null>(
+      null,
+    );
 
     useBridgeMessage<K>(type, (newPayload, newMessage) => {
-      setPayload(newPayload);
-      setMessage(newMessage);
+      setPayload(newPayload as StatePayload);
+      setMessage(newMessage as BridgeMessage<StatePayload>);
     });
 
     return [payload, message] as const;
@@ -182,8 +216,12 @@ export function createBridgeHooks<
    * an unhandled rejection and a forever-false flag.
    */
   function useBridgeReadyState(timeout?: number): BridgeReadyState {
+    // Initialize to NOT ready so the first client render matches server output
+    // (during SSR bridge.isReady() is false because initialize() early-returns
+    // without a window). Reading bridge.isReady() here would make the first
+    // client render disagree with the server and trigger a hydration mismatch.
     const [state, setState] = useState<BridgeReadyState>({
-      ready: bridge.isReady(),
+      ready: false,
       error: null,
     });
 
@@ -239,11 +277,23 @@ export function createBridgeHooks<
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const [data, setData] = useState<ResponseType | null>(null);
+    // Monotonic call counter: only the latest request's settlement is allowed
+    // to update state, so a slow earlier call (e.g. one that times out after a
+    // retry succeeded) cannot overwrite newer data or clear loading early.
+    const seq = useRef(0);
+    const mounted = useRef(true);
+    useEffect(() => {
+      return () => {
+        mounted.current = false;
+      };
+    }, []);
 
     async function request(
       payload?: PayloadType,
       timeout?: number,
     ): Promise<ResponseType | null> {
+      const mySeq = ++seq.current;
+      const isCurrent = () => mounted.current && seq.current === mySeq;
       setLoading(true);
       setError(null);
       try {
@@ -252,18 +302,24 @@ export function createBridgeHooks<
           payload as unknown,
           timeout,
         );
-        setData(result as ResponseType);
+        if (isCurrent()) {
+          setData(result as ResponseType);
+          setLoading(false);
+        }
         return result as ResponseType;
       } catch (err) {
         const e = err instanceof Error ? err : new Error(String(err));
-        setError(e);
+        if (isCurrent()) {
+          setError(e);
+          setLoading(false);
+        }
         return null;
-      } finally {
-        setLoading(false);
       }
     }
 
     function reset() {
+      // Invalidate any in-flight request so its settlement is ignored.
+      seq.current++;
       setLoading(false);
       setError(null);
       setData(null);
@@ -292,7 +348,8 @@ export function createBridgeHooks<
     const [error, setError] = useState<Error | null>(null);
     const pendingIds = useRef(new Set<string>());
 
-    const effectiveResponseType = responseType ?? `${requestType}_response`;
+    const effectiveResponseType =
+      responseType ?? `${requestType}${RESPONSE_SUFFIX}`;
 
     useEffect(() => {
       const subscription = bridge.on(
@@ -346,13 +403,41 @@ export function createBridgeHooks<
 
   // ── usePlatform / useIsNative ──────────────────────────────────────────────
 
-  /** Non-reactive: platform cannot change after page load. */
+  // Platform can't change after page load, so subscribe is a no-op. Snapshots
+  // are cached to keep a stable object identity for useSyncExternalStore, and
+  // the server snapshot is a conservative "web"/non-native value so the first
+  // client render (which in a WebView would detect native) matches server HTML
+  // and never triggers a hydration mismatch.
+  const noopSubscribe = () => () => {};
+  let clientPlatformSnapshot: PlatformInfo | null = null;
+  const serverPlatformSnapshot: PlatformInfo = {
+    platform: "web",
+    isNative: false,
+    userAgent: "unknown",
+  };
+  const getClientPlatform = (): PlatformInfo => {
+    if (!clientPlatformSnapshot) {
+      clientPlatformSnapshot = bridge.getPlatform();
+    }
+    return clientPlatformSnapshot;
+  };
+  const getServerPlatform = (): PlatformInfo => serverPlatformSnapshot;
+
+  /**
+   * Platform info. Non-reactive (platform cannot change after page load), but
+   * SSR-safe: the server and first client render both see the "web" snapshot,
+   * then it settles to the real platform after hydration.
+   */
   function usePlatform(): PlatformInfo {
-    return bridge.getPlatform();
+    return useSyncExternalStore(
+      noopSubscribe,
+      getClientPlatform,
+      getServerPlatform,
+    );
   }
 
   function useIsNative(): boolean {
-    return bridge.getPlatform().isNative;
+    return usePlatform().isNative;
   }
 
   // ── useBridgeMetrics ───────────────────────────────────────────────────────
@@ -387,9 +472,16 @@ export function createBridgeHooks<
     useEffect(() => {
       if (!bridge.getQueueStats()) return;
 
+      // getQueueStats() returns a fresh object each tick, so setState-ing it
+      // unconditionally re-renders every consumer once per interval even when
+      // nothing changed. Only update on an actual value change.
       const interval = setInterval(() => {
         const newStats = bridge.getQueueStats();
-        if (newStats) setStats(newStats);
+        if (newStats) {
+          setStats((prev) =>
+            queueStatsEqual(prev, newStats) ? prev : newStats,
+          );
+        }
       }, pollInterval);
 
       return () => clearInterval(interval);
@@ -398,7 +490,9 @@ export function createBridgeHooks<
     async function flush() {
       await bridge.flushQueue();
       const newStats = bridge.getQueueStats();
-      if (newStats) setStats(newStats);
+      if (newStats) {
+        setStats((prev) => (queueStatsEqual(prev, newStats) ? prev : newStats));
+      }
     }
 
     return {
