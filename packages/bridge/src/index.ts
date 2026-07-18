@@ -52,6 +52,17 @@ export type {
   VariantWhen,
   VersionConstraint,
 } from "./host/types";
+// Version parsing/comparison utilities (public: for tooling that needs to
+// parse or compare host versions the same way the engine does).
+export {
+  type Constraint,
+  type ConstraintOperator,
+  type ParsedVersion,
+  parseConstraint,
+  parseConstraints,
+  parseVersion,
+  satisfies,
+} from "./host/version";
 // Middleware exports
 export {
   debugMiddleware,

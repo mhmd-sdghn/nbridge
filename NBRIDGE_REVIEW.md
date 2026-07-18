@@ -488,14 +488,14 @@ Variants get a uniform `when: { platform?, version?, traits? }`; capabilities ar
 
 Fix (breaking): add an `all`/`default` platform key, or better, converge capabilities on the variant grammar so `CapabilityWhen` can carry platform and version too.
 
-**3.5 Trait `values` are documented as constraining but never enforced; trait value types don't flow to `setTrait`/`useTrait`**
+**3.5 [PARTIAL] Trait `values` are documented as constraining but never enforced; trait value types don't flow to `setTrait`/`useTrait`**
 `src/host/types.ts:21-27, 255`, `HostRulesEngine.ts:148-164`, `createHostHooks.tsx:99`
 
 The docs say a `values` list "both constrains and types the accepted values"; at runtime it is kept only for `__introspect`. An out-of-domain source value (wrong case query param, arbitrary user-supplied input) lands verbatim in `info().traits` and just fails every rule with no signal. On the type side, the domain typing applies only inside `TraitMatch`: `setTrait` accepts any `string | null` and `useTrait` returns `string | null`.
 
 Fix: enforce at resolution (out-of-domain resolves to null, dev-mode warning) and thread `TraitValue<TTraits[K]>` through `setTrait`/`useTrait`; or fix the docs to drop "constrains".
 
-**3.6 Dunder-prefixed methods are the only supported path for load-bearing consumer use cases**
+**3.6 [FIXED] Dunder-prefixed methods are the only supported path for load-bearing consumer use cases**
 `src/host/types.ts:260-264`, `createHostHooks.tsx:73-103`
 
 `__setOverride` is documented as "the only supported override mechanism" (and the package's own test suite drives nearly every scenario through it); `__serverSnapshot` is required by the shipped React bindings. An app unit-testing its own capability gates has no non-dunder way to force a platform, yet the naming signals "private, unstable".
@@ -511,7 +511,7 @@ Fix: one convention: treat explicit `undefined` as absent everywhere (`!== undef
 
 Fixed (breaking, see BREAKING_CHANGES.md #3): version and trait overrides now use value semantics (`!== undefined`), so `undefined` means "leave source/explicit value in effect" and `null` forces unknown, consistent with `override.platform` and the capability-compile convention.
 
-**3.8 `info().version` is the raw string gated on parse success; the normalized parse and the parser utilities are unreachable**
+**3.8 [FIXED] `info().version` is the raw string gated on parse success; the normalized parse and the parser utilities are unreachable**
 `src/host/resolve.ts:29, 150`, `HostRulesEngine.ts:178-186`, `src/host/version.ts`
 
 `version` can legitimately be `"v8.2"` or `" 8.2 "` (parseVersion tolerates trim/leading-v), so `info().version === "8.2.0"` comparisons surprise. The normalized `ParsedVersion` exists on `ResolvedHost.parsed` but `toInfo` strips it, and `parseVersion`/`satisfies` are not exported.
@@ -527,7 +527,7 @@ Fix: unify the shape, and/or let `HostRulesConfig.platform` accept a platform so
 
 ### Low
 
-**3.10 Empty query param value (`?hv=`) clobbers a previously persisted good version**
+**3.10 [FIXED] Empty query param value (`?hv=`) clobbers a previously persisted good version**
 `src/host/sources.ts:67`
 
 `URLSearchParams.get` returns `""` for `?hv=`; the code checks only `!== null`, so an empty value overwrites the stored good version and parses to null: from that navigation on, every version gate denies for the rest of the session.
@@ -543,28 +543,28 @@ Fix: `Object.create(null)` for the compiled maps, or `Object.hasOwn` guards.
 
 Fixed: `supports()` and `variant()` now guard with `Object.prototype.hasOwnProperty.call(...)` before the lookup, so inherited names return the documented `false` / "Unknown variant" error instead of an opaque TypeError.
 
-**3.12 `versionFromUserAgent` silently breaks with a `g`- or `y`-flagged regex**
+**3.12 [FIXED] `versionFromUserAgent` silently breaks with a `g`- or `y`-flagged regex**
 `src/host/sources.ts:125-131`
 
 With `g`, `String.prototype.match` returns full-match strings and ignores capture groups, so `match[1]` is wrong or undefined; with `y`, `lastIndex` state persists across resolutions so successive `refresh()` calls can alternate between a value and null.
 
 Fix: at factory time, recreate the regex without `g`/`y` (or throw), consistent with the engine's fail-fast config validation.
 
-**3.13 Empty trait-value array compiles to a never-matching condition silently, while an empty version-constraint array throws at config time**
+**3.13 [FIXED] Empty trait-value array compiles to a never-matching condition silently, while an empty version-constraint array throws at config time**
 `src/host/HostRulesEngine.ts:48-53`, `src/host/resolve.ts:167`, `src/host/version.ts:93`
 
 `traits: { mk: [] }` compiles to `values: []`, and `[].includes(x)` is always false: the rule can never match, silently. The analogous version case throws "Invalid version constraint" at `defineHostRules` time, which is the module's stated fail-fast philosophy.
 
 Fix: throw at compile time on an empty normalized values array, naming the capability/variant and trait.
 
-**3.14 Strict version grammar silently degrades common real-world versions (4 segments, prerelease/build suffixes) to unknown**
+**3.14 [FIXED] Strict version grammar silently degrades common real-world versions (4 segments, prerelease/build suffixes) to unknown**
 `src/host/version.ts:44, 48`
 
 `"9.1.0.1234"` (Android versionName style), `"9.1.0-rc1"`, `"9.1.0+456"` all parse to null; every version-gated capability then denies, invisibly in production. The conservative direction is intentional and tested, but the failure mode has no signal.
 
 Fix: parse a tolerant numeric prefix (up to 3 leading numeric segments, ignore `-...`/`+...` suffixes and extra `.N`), or at least warn in dev when `versionRaw` is non-null but parses null.
 
-**3.15 Query-backed sources re-parse `location.search` and hit sessionStorage once per source per resolution; setters have no batching**
+**3.15 [PARTIAL] Query-backed sources re-parse `location.search` and hit sessionStorage once per source per resolution; setters have no batching**
 `src/host/sources.ts:66-81`, `src/host/resolve.ts:132, 138-140`, `HostRulesEngine.ts:255-258, 294-312`
 
 Every `compute()` invokes every source; each source builds a fresh `URLSearchParams` and does a synchronous storage access (including an unconditional `setItem` with no equality check, which also fires cross-frame storage events). Every `setVersion`/`setTrait`/`__setOverride` triggers a full re-resolution plus a synchronous sweep of all listeners, so the documented async-acquisition pattern (host pushes version + M traits over the bridge) costs M+1 resolutions and listener sweeps. (Mitigating: explicitly-set values short-circuit their sources on later passes.)
@@ -580,14 +580,14 @@ Fix: add `persist?: boolean` (default true) to `VersionFromQueryOptions`.
 
 Fixed: `VersionFromQueryOptions` now has `persist?: boolean` (default true), passed through to the shared helper, matching `traitFromQuery`. (Non-breaking.)
 
-**3.17 `supports()` fails silent for unknown names while `variant()` throws; neither behavior is documented**
+**3.17 [FIXED] `supports()` fails silent for unknown names while `variant()` throws; neither behavior is documented**
 `src/host/HostRulesEngine.ts:262-273`
 
 For JS consumers/dynamic names (the audience with no compiler help), one API fails loud and the other silent. Silent-false does align with the capability fail-safe rule, but nothing says so.
 
 Fix: either make both throw, or document the asymmetry on `supports()`/`HostRules`.
 
-**3.18 `host/index.ts` is a dead second export list that has already drifted from the root barrel**
+**3.18 [FIXED] `host/index.ts` is a dead second export list that has already drifted from the root barrel**
 `src/host/index.ts:6-37`, `src/index.ts:21-54`
 
 Nothing imports the host barrel (internal code and the root barrel use deep paths), there is no `./host` subpath in package.json exports, and `HostServerSnapshot` is exported from the root but missing from the host barrel.
@@ -599,7 +599,7 @@ Fix: make `host/index.ts` the single source of truth and re-export it from `src/
 
 Three coupled maintenance hazards: the Compiled* interfaces live in a file that never constructs them; `ResolvedHost` duplicates `HostInfo` field-by-field (bridge them with `interface ResolvedHost extends HostInfo { parsed: ... }` and a destructuring `toInfo`); `SERVER_HOST` is a hand-written literal that must mirror `resolveHost`'s isServer branch (derive it by calling `resolveHost` with a `forceServer` flag instead).
 
-**3.20 `select()` is the one non-reactive read; no `useSelect` hook**
+**3.20 [FIXED] `select()` is the one non-reactive read; no `useSelect` hook**
 `src/react/createHostHooks.tsx:136-144`
 
 The engine exposes supports/variant/info/select; the hooks bind the first three (plus useTrait). `host.select({...})` called in a component body silently never re-renders on override/refresh, diverging from sibling `useCapability` calls in the same tree.

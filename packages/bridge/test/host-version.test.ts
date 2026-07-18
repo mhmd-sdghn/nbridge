@@ -18,12 +18,25 @@ describe("parseVersion", () => {
     expect(parseVersion("v2.1")).toEqual({ major: 2, minor: 1, patch: 0 });
   });
 
-  it("returns null for anything unparsable", () => {
+  it("returns null only when there is no usable leading numeric segment", () => {
     expect(parseVersion("abc")).toBeNull();
-    expect(parseVersion("1.x")).toBeNull();
     expect(parseVersion("")).toBeNull();
-    expect(parseVersion("1.2.3.4")).toBeNull();
-    expect(parseVersion("1.2.3-beta")).toBeNull();
+    expect(parseVersion("x.1.2")).toBeNull();
+  });
+
+  it("tolerantly parses real-world version strings (finding 3.14)", () => {
+    // Extra segments beyond 3 are ignored (Android versionName style).
+    expect(parseVersion("1.2.3.4")).toEqual({ major: 1, minor: 2, patch: 3 });
+    // Pre-release / build suffixes are stripped.
+    expect(parseVersion("1.2.3-beta")).toEqual({
+      major: 1,
+      minor: 2,
+      patch: 3,
+    });
+    expect(parseVersion("9.1.0-rc1")).toEqual({ major: 9, minor: 1, patch: 0 });
+    expect(parseVersion("9.1.0+456")).toEqual({ major: 9, minor: 1, patch: 0 });
+    // A trailing non-numeric segment stops parsing at the numeric prefix.
+    expect(parseVersion("1.x")).toEqual({ major: 1, minor: 0, patch: 0 });
   });
 });
 

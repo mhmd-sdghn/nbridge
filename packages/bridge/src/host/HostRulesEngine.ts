@@ -10,6 +10,7 @@
  */
 
 import type { BridgePlatform } from "../types";
+import { isProductionEnv } from "../utils/env";
 import {
   type CompiledCapability,
   type CompiledTraitCondition,
@@ -47,10 +48,16 @@ function compileTraitMatch(
   const conditions: CompiledTraitCondition[] = [];
   for (const [name, value] of Object.entries(match)) {
     if (value === undefined) continue;
-    conditions.push({
-      name,
-      values: Array.isArray(value) ? [...value] : [value as string],
-    });
+    const values = Array.isArray(value) ? [...value] : [value as string];
+    // Fail fast, mirroring the empty-version-constraint check: an empty values
+    // array compiles to a condition that can never match ([].includes(x) is
+    // always false), which is almost always a config mistake.
+    if (values.length === 0) {
+      throw new Error(
+        `[nbridge] Trait "${name}" has an empty values array, which can never match. Provide at least one value or remove the trait.`,
+      );
+    }
+    conditions.push({ name, values });
   }
   return conditions;
 }
@@ -243,6 +250,22 @@ export function defineHostRules<
       explicitTraits,
       override,
     });
+    // Enforce declared trait `values` domains: a resolved value outside the
+    // declared list is treated as unknown (null), matching the documented
+    // "constrains the accepted values" contract instead of silently failing
+    // every rule with an out-of-domain value.
+    for (const [name, allowed] of Object.entries(traitValues)) {
+      if (!allowed) continue;
+      const value = resolved.traits[name];
+      if (value !== null && value !== undefined && !allowed.includes(value)) {
+        if (!isProductionEnv()) {
+          console.warn(
+            `[nbridge] Trait "${name}" resolved to "${value}", which is not in its declared values [${allowed.join(", ")}]; treating as unknown.`,
+          );
+        }
+        resolved.traits[name] = null;
+      }
+    }
     info = toInfo(resolved);
   }
 
@@ -319,6 +342,12 @@ export function defineHostRules<
       reresolve();
     },
 
+    setOverride(next) {
+      override = next;
+      reresolve();
+    },
+
+    // Deprecated alias for setOverride (kept for compatibility).
     __setOverride(next) {
       override = next;
       reresolve();

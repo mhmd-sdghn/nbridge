@@ -96,3 +96,47 @@ named params, pass an explicit `storageKey` to preserve the old value:
 + versionFromQuery("appVersion", { storageKey: "nbridge:host-version" })
 ```
 Most apps need no change.
+
+---
+
+## 5. `host.__setOverride` renamed to `host.setOverride` (finding 3.6)
+
+**Why:** the dunder name signalled "private/unstable", but it is the supported
+way for tests and devtools to drive the engine (the test suite and the shipped
+React bindings depend on it).
+
+**Change:** `host.setOverride(...)` is the public method. `host.__setOverride`
+remains as a `@deprecated` alias.
+
+**Migrate:** `host.__setOverride(x)` → `host.setOverride(x)` (no rush; the alias
+still works).
+
+---
+
+## 6. `parseVersion` is now tolerant of real-world version strings (finding 3.14)
+
+**Why:** the strict grammar rejected common host versions (`9.1.0.1234`,
+`9.1.0-rc1`, `9.1.0+456`), silently denying every version-gated capability.
+
+**Change:** `parseVersion` now accepts up to three leading numeric segments and
+ignores extra `.N` segments plus a trailing `-`/`+` suffix. It returns `null`
+only when there is no usable leading numeric segment. `parseVersion`/`satisfies`
+and the constraint helpers are now exported from `nbridge`.
+
+**Migrate:** none required unless you relied on `"1.2.3.4"` / `"1.2.3-beta"`
+resolving to unknown; they now parse to `1.2.3`.
+
+---
+
+## 7. Declared trait `values` are now enforced at runtime (finding 3.5)
+
+**Why:** the docs said a trait's `values` list "constrains the accepted
+values", but an out-of-domain value was passed through verbatim and just failed
+every rule with no signal.
+
+**Change:** a resolved trait value outside its declared `values` list now
+resolves to `null` (unknown), with a dev-mode `console.warn`.
+
+**Migrate:** ensure your sources emit values within the declared list; if you
+intentionally allowed arbitrary values, remove the `values` list from that
+trait's definition.

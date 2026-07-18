@@ -31,23 +31,37 @@ const OPERATORS: ConstraintOperator[] = [">=", "<=", ">", "<", "="];
 /**
  * Parse a version string into numeric segments.
  *
- * Accepts 1–3 dot-separated numeric segments with an optional leading `v`.
- * Anything else (letters, pre-release tags, too many segments, empty) yields
- * `null` — an unparsable version is treated as unknown by the engine.
+ * Tolerant of real-world host version strings: accepts an optional leading `v`,
+ * up to three leading numeric segments, and ignores extra `.N` segments and a
+ * trailing pre-release/build suffix (`-rc1`, `+456`). So `"9.1.0.1234"`,
+ * `"9.1.0-rc1"`, and `"9.1.0+456"` all parse to `9.1.0`. Only a string with no
+ * usable leading numeric segment (e.g. letters, empty) yields `null`, which the
+ * engine treats as unknown.
  */
 export function parseVersion(raw: string): ParsedVersion | null {
   const trimmed = raw.trim();
-  const body = trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+  let body = trimmed.startsWith("v") ? trimmed.slice(1) : trimmed;
+  if (body === "") return null;
+
+  // Drop a trailing pre-release/build suffix before the numeric split.
+  const suffixIndex = body.search(/[-+]/);
+  if (suffixIndex !== -1) body = body.slice(0, suffixIndex);
   if (body === "") return null;
 
   const segments = body.split(".");
-  if (segments.length < 1 || segments.length > 3) return null;
-
   const nums: number[] = [];
+  // Take up to the first three numeric segments; ignore any beyond that.
   for (const segment of segments) {
-    if (!/^\d+$/.test(segment)) return null;
+    if (nums.length === 3) break;
+    if (!/^\d+$/.test(segment)) {
+      // A non-numeric first segment means it is not a version at all.
+      if (nums.length === 0) return null;
+      break;
+    }
     nums.push(Number(segment));
   }
+
+  if (nums.length === 0) return null;
 
   return {
     major: nums[0] ?? 0,

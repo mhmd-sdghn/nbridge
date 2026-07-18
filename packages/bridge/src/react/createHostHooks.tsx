@@ -7,6 +7,7 @@ import type {
   CapabilityRule,
   HostInfo,
   HostRules,
+  PlatformSelect,
   TraitName,
   TraitsConfig,
   VariantDef,
@@ -104,6 +105,17 @@ export function createHostHooks<
     );
   }
 
+  /**
+   * Pick a per-platform value, reactive to re-resolution. The reactive
+   * counterpart of `host.select()` (which is a one-shot read); use this in a
+   * component body so the value updates on `__setOverride`/`refresh`.
+   */
+  function useSelect<T>(map: PlatformSelect<T>): T {
+    const { platform } = useHostInfo();
+    const value = map[platform];
+    return value !== undefined ? value : map.default;
+  }
+
   /** Render `children` when a capability is enabled, else `fallback`. */
   function CapabilityGate({
     capability,
@@ -138,6 +150,7 @@ export function createHostHooks<
     useCapability,
     useVariant,
     useTrait,
+    useSelect,
     CapabilityGate,
     PlatformOnly,
     VariantSwitch,

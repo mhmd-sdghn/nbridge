@@ -218,10 +218,20 @@ export interface HostRules<
   TVariants extends Record<string, VariantDef> = Record<string, VariantDef>,
   TTraits extends TraitsConfig = TraitsConfig,
 > {
-  /** Whether a capability is enabled on the resolved host. */
+  /**
+   * Whether a capability is enabled on the resolved host. Fail-safe: an unknown
+   * name returns `false` (never throws), consistent with the "absent platform
+   * key means false" rule, so a capability gate can never crash a render. This
+   * is intentionally different from `variant()`, which throws on an unknown
+   * name because a variant has no safe default value to return.
+   */
   supports(name: CapabilityName<TCaps>): boolean;
 
-  /** The resolved value of a variant (typed union of its rule values + default). */
+  /**
+   * The resolved value of a variant (typed union of its rule values + default).
+   * Throws `[nbridge] Unknown variant "..."` for a name not in the config
+   * (unlike `supports`, there is no safe fallback value).
+   */
   variant<K extends VariantName<TVariants>>(
     name: K,
   ): VariantValue<TVariants[K]>;
@@ -258,8 +268,15 @@ export interface HostRules<
   refresh(): void;
 
   /**
-   * DEV-ONLY escape hatch for devtools/tests: force a platform, version, and/or
-   * traits. Not for production; the only supported override mechanism.
+   * Force a platform, version, and/or traits. The supported mechanism for
+   * tests and devtools to drive the engine. Pass `null` to clear the override.
+   * Field semantics: an omitted or `undefined` field leaves the source/explicit
+   * value in effect; `null` forces that field to unknown.
+   */
+  setOverride(override: HostOverride | null): void;
+
+  /**
+   * @deprecated Use `setOverride`. Kept as an alias for compatibility.
    */
   __setOverride(override: HostOverride | null): void;
 
