@@ -4,11 +4,34 @@ Full review of `packages/bridge` (published as `nbridge`). Written for a refacto
 
 ## Fix status legend
 
-Findings are being fixed in place; each heading carries a status marker:
+Findings are fixed in place; each heading carries a status marker:
 
 - **[FIXED]**: implemented and covered by the test suite where applicable.
 - **[PARTIAL]**: some sub-items fixed; remainder noted inline.
-- No marker: not yet addressed.
+- No marker: not addressed (see the deferred list below).
+
+**Status (119 findings): 93 FIXED, 15 PARTIAL, 11 not addressed.** The test
+suite grew from 116 to 153 passing tests; typecheck, lint, and build are green.
+Breaking changes are logged in `BREAKING_CHANGES.md`.
+
+The 11 not-addressed findings are intentionally deferred, each because it is a
+large structural refactor or device-sensitive work whose risk outweighs its
+correctness value; they are documented inline and summarized here:
+
+- **1.8** BridgeManager decomposition: large structural refactor (900-line
+  class); the discrete bugs inside it are fixed, the reorg is not.
+- **1.26** multi-tab queue safety: needs cross-tab storage-event coordination
+  / locking; a design change, not a localized fix.
+- **1.37** JSDoc quality: cosmetic.
+- **2.7** shared adapter base classes: pure structure; behavior already
+  correct after the per-adapter fixes.
+- **3.3 / 3.9 / 3.19** capability-grammar rewrite / platform-config unification
+  / host file split: large host-API reshapes; the `all` key (3.4) already
+  removed the main ergonomic pain.
+- **4.4 / 4.11 / 4.13 / 8.14** buried-trap-after-pushState and the queued-back
+  race: device-sensitive history-tracking rework; an attempted pushState patch
+  was reverted (double-patches with the session tracker). Surrounding back-nav
+  issues (4.3, 4.5, 4.9, 4.12, 4.14) are fixed.
 
 Severity meanings:
 
