@@ -411,7 +411,7 @@ Fix: in the send path, let stringify failures throw (include `message.type` in t
 
 Fixed: `AndroidAdapter.send` now calls `JSON.stringify` directly, so a non-serializable payload throws and propagates through the send path (matching iOS) instead of delivering `"{}"`.
 
-**2.7 `parseMessage` duplicated between IframeAdapter and WebAdapter with divergent behavior; Android/iOS adapters duplicate identical lifecycle bodies**
+**2.7 [PARTIAL] `parseMessage` duplicated between IframeAdapter and WebAdapter with divergent behavior; Android/iOS adapters duplicate identical lifecycle bodies**
 `src/core/adapters/IframeAdapter.ts:63-82`, `src/core/adapters/WebAdapter.ts:69-74`, `AndroidAdapter.ts:24-27, 51-55`, `IOSAdapter.ts:23-26, 57-61`
 
 IframeAdapter accepts object frames AND JSON-string frames; WebAdapter accepts only objects and silently drops strings (its logger is entirely unused, see 2.12). The listener add/remove/null lifecycle is copy-pasted between the two postMessage adapters, and `initialize`/`destroy` are byte-identical between Android and iOS adapters. Copy-divergence has already produced the string-frame inconsistency.

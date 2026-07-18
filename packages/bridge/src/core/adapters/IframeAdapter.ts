@@ -1,5 +1,5 @@
 import type { BridgeMessage } from "../../types";
-import { type BridgeLogger, isBridgeEnvelope } from "../../utils/helpers";
+import { type BridgeLogger, parseBridgeFrame } from "../../utils/helpers";
 import { isIframe } from "../../utils/platform";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
@@ -62,7 +62,7 @@ export class IframeAdapter implements IPlatformAdapter {
         if (event.origin !== this.parentOrigin) return;
       }
 
-      const message = this.parseMessage(event.data);
+      const message = parseBridgeFrame(event.data);
       if (!message) return;
 
       onMessage(message);
@@ -96,26 +96,5 @@ export class IframeAdapter implements IPlatformAdapter {
       window.removeEventListener("message", this.messageListener);
       this.messageListener = null;
     }
-  }
-
-  private parseMessage(data: unknown): BridgeMessage | null {
-    // If it's already an object
-    if (typeof data === "object" && data !== null && isBridgeEnvelope(data)) {
-      return data;
-    }
-
-    // If it's a string, try to parse it
-    if (typeof data === "string") {
-      try {
-        const parsed = JSON.parse(data);
-        if (isBridgeEnvelope(parsed)) {
-          return parsed;
-        }
-      } catch {
-        // Not valid JSON
-      }
-    }
-
-    return null;
   }
 }

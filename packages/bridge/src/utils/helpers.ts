@@ -47,6 +47,27 @@ export function isBridgeEnvelope(value: unknown): value is BridgeMessage {
   return isValidMessage(value) && (value as BridgeMessage).__nbridge === 1;
 }
 
+/**
+ * Parse a postMessage frame into a bridge message, or null if it is not one.
+ * Accepts both an already-parsed object and a JSON string (native shells and
+ * test harnesses may deliver either). Shared by the iframe and web adapters so
+ * their frame handling cannot diverge.
+ */
+export function parseBridgeFrame(data: unknown): BridgeMessage | null {
+  if (typeof data === "object" && data !== null && isBridgeEnvelope(data)) {
+    return data;
+  }
+  if (typeof data === "string") {
+    try {
+      const parsed = JSON.parse(data);
+      if (isBridgeEnvelope(parsed)) return parsed;
+    } catch {
+      // Not valid JSON.
+    }
+  }
+  return null;
+}
+
 export function safeStringify(value: unknown): string {
   try {
     return JSON.stringify(value);

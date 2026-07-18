@@ -1,5 +1,5 @@
 import type { BridgeMessage } from "../../types";
-import { type BridgeLogger, isBridgeEnvelope } from "../../utils/helpers";
+import { type BridgeLogger, parseBridgeFrame } from "../../utils/helpers";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
 /**
@@ -37,7 +37,7 @@ export class WebAdapter implements IPlatformAdapter {
         return;
       }
 
-      const message = this.parseMessage(event.data);
+      const message = parseBridgeFrame(event.data);
       if (!message) {
         this.logger?.log("WebAdapter: ignored non-bridge message", event.data);
         return;
@@ -70,23 +70,5 @@ export class WebAdapter implements IPlatformAdapter {
       window.removeEventListener("message", this.messageListener);
       this.messageListener = null;
     }
-  }
-
-  private parseMessage(data: unknown): BridgeMessage | null {
-    if (typeof data === "object" && data !== null && isBridgeEnvelope(data)) {
-      return data;
-    }
-    // Native shells and test harnesses may deliver JSON strings.
-    if (typeof data === "string") {
-      try {
-        const parsed = JSON.parse(data);
-        if (isBridgeEnvelope(parsed)) {
-          return parsed;
-        }
-      } catch {
-        // Not valid JSON
-      }
-    }
-    return null;
   }
 }
