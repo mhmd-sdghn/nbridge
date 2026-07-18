@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { BackInterceptManager } from "./BackInterceptManager";
 
 /**
@@ -61,11 +61,13 @@ export function useBackIntercept(
     }
   }, [initiallyActive, manager]);
 
-  const activateIntercept = () =>
-    idRef.current && manager.update(idRef.current, { isActive: true });
+  const activateIntercept = useCallback(() => {
+    if (idRef.current) manager.update(idRef.current, { isActive: true });
+  }, [manager]);
 
-  const deactivateIntercept = () =>
-    idRef.current && manager.update(idRef.current, { isActive: false });
+  const deactivateIntercept = useCallback(() => {
+    if (idRef.current) manager.update(idRef.current, { isActive: false });
+  }, [manager]);
 
   return {
     activateIntercept,

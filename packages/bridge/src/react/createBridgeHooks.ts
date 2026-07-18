@@ -1,6 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, useSyncExternalStore } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import { RESPONSE_SUFFIX } from "../constants/protocol";
 import { createBridge } from "../core/BridgeManager";
 import type {
@@ -76,48 +83,49 @@ export function createBridgeHooks<
 
   // ── useBridgeSend ──────────────────────────────────────────────────────────
 
-  function useBridgeSend() {
-    async function send<
-      K extends TSchemas extends SchemaRegistry
-        ? MessageTypes<TSchemas>
-        : string,
-    >(
-      type: K,
-      payload?: TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? PayloadFor<TSchemas, K>
-          : never
-        : unknown,
-      opts?: BridgeSendOptions,
-    ): Promise<BridgeResponse> {
-      // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
-      return bridge.send(type as any, payload, opts);
-    }
+  // send/sendWithResponse close over only the module-scoped bridge, so they are
+  // defined once at factory scope. useBridgeSend returns this frozen object so
+  // its identity is stable across renders (safe in effect dependency arrays).
+  async function send<
+    K extends TSchemas extends SchemaRegistry ? MessageTypes<TSchemas> : string,
+  >(
+    type: K,
+    payload?: TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : never
+      : unknown,
+    opts?: BridgeSendOptions,
+  ): Promise<BridgeResponse> {
+    // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
+    return bridge.send(type as any, payload, opts);
+  }
 
-    async function sendWithResponse<
-      K extends TSchemas extends SchemaRegistry
-        ? MessageTypes<TSchemas>
-        : string,
-    >(
-      type: K,
-      payload?: TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? PayloadFor<TSchemas, K>
-          : never
-        : unknown,
-      timeout?: number,
-    ): Promise<
-      TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? ResponseFor<TSchemas, K>
-          : unknown
+  async function sendWithResponse<
+    K extends TSchemas extends SchemaRegistry ? MessageTypes<TSchemas> : string,
+  >(
+    type: K,
+    payload?: TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : never
+      : unknown,
+    timeout?: number,
+  ): Promise<
+    TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? ResponseFor<TSchemas, K>
         : unknown
-    > {
-      // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
-      return bridge.sendWithResponse(type as any, payload, timeout);
-    }
+      : unknown
+  > {
+    // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
+    return bridge.sendWithResponse(type as any, payload, timeout);
+  }
 
-    return { send, sendWithResponse };
+  const sendApi = Object.freeze({ send, sendWithResponse });
+
+  function useBridgeSend() {
+    return sendApi;
   }
 
   // ── useBridgeMessage ───────────────────────────────────────────────────────
@@ -288,42 +296,47 @@ export function createBridgeHooks<
       };
     }, []);
 
-    async function request(
-      payload?: PayloadType,
-      timeout?: number,
-    ): Promise<ResponseType | null> {
-      const mySeq = ++seq.current;
-      const isCurrent = () => mounted.current && seq.current === mySeq;
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await bridge.sendWithResponse(
-          type as string,
-          payload as unknown,
-          timeout,
-        );
-        if (isCurrent()) {
-          setData(result as ResponseType);
-          setLoading(false);
+    // Stable identities (deps are all stable refs/setters) so consumers can
+    // safely put request/reset in effect dependency arrays.
+    const request = useCallback(
+      async (
+        payload?: PayloadType,
+        timeout?: number,
+      ): Promise<ResponseType | null> => {
+        const mySeq = ++seq.current;
+        const isCurrent = () => mounted.current && seq.current === mySeq;
+        setLoading(true);
+        setError(null);
+        try {
+          const result = await bridge.sendWithResponse(
+            type as string,
+            payload as unknown,
+            timeout,
+          );
+          if (isCurrent()) {
+            setData(result as ResponseType);
+            setLoading(false);
+          }
+          return result as ResponseType;
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          if (isCurrent()) {
+            setError(e);
+            setLoading(false);
+          }
+          return null;
         }
-        return result as ResponseType;
-      } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        if (isCurrent()) {
-          setError(e);
-          setLoading(false);
-        }
-        return null;
-      }
-    }
+      },
+      [type],
+    );
 
-    function reset() {
+    const reset = useCallback(() => {
       // Invalidate any in-flight request so its settlement is ignored.
       seq.current++;
       setLoading(false);
       setError(null);
       setData(null);
-    }
+    }, []);
 
     return { request, loading, error, data, reset };
   }
@@ -347,11 +360,22 @@ export function createBridgeHooks<
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const pendingIds = useRef(new Set<string>());
+    // Per-call expiry timers so a dropped host response cannot leave loading
+    // stuck true forever with a stale id poisoning later correlation (4.10).
+    const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
     const effectiveResponseType =
       responseType ?? `${requestType}${RESPONSE_SUFFIX}`;
 
     useEffect(() => {
+      const clearTimer = (id: string) => {
+        const t = timers.current.get(id);
+        if (t !== undefined) {
+          clearTimeout(t);
+          timers.current.delete(id);
+        }
+      };
+
       const subscription = bridge.on(
         effectiveResponseType,
         (payload: unknown, message: BridgeMessage) => {
@@ -359,10 +383,14 @@ export function createBridgeHooks<
 
           if (message.id && pendingIds.current.has(message.id)) {
             pendingIds.current.delete(message.id);
+            clearTimer(message.id);
           } else if (!message.id) {
             // Host doesn't echo ids — treat as answering the oldest call.
             const first = pendingIds.current.values().next().value;
-            if (first !== undefined) pendingIds.current.delete(first);
+            if (first !== undefined) {
+              pendingIds.current.delete(first);
+              clearTimer(first);
+            }
           } else {
             return; // correlated response for a different consumer
           }
@@ -375,28 +403,59 @@ export function createBridgeHooks<
       return () => subscription.unsubscribe();
     }, [effectiveResponseType]);
 
-    async function call(payload: TRequest): Promise<void> {
-      setLoading(true);
-      setError(null);
-      setResponse(null);
-      try {
-        const result = await bridge.send(requestType, payload);
-        if (result.id) {
-          pendingIds.current.add(result.id);
-        }
-      } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        setError(e);
-        setLoading(false);
-      }
-    }
+    // Clear all timers on unmount.
+    useEffect(() => {
+      const map = timers.current;
+      return () => {
+        for (const t of map.values()) clearTimeout(t);
+        map.clear();
+      };
+    }, []);
 
-    function reset() {
+    const call = useCallback(
+      async (payload: TRequest, timeout?: number): Promise<void> => {
+        setLoading(true);
+        setError(null);
+        setResponse(null);
+        try {
+          const result = await bridge.send(requestType, payload);
+          if (result.id) {
+            const id = result.id;
+            pendingIds.current.add(id);
+            if (timeout && timeout > 0) {
+              timers.current.set(
+                id,
+                setTimeout(() => {
+                  if (pendingIds.current.delete(id)) {
+                    timers.current.delete(id);
+                    setError(
+                      new Error(
+                        `RPC "${requestType}" timed out after ${timeout}ms`,
+                      ),
+                    );
+                    setLoading(pendingIds.current.size > 0);
+                  }
+                }, timeout),
+              );
+            }
+          }
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          setError(e);
+          setLoading(false);
+        }
+      },
+      [requestType],
+    );
+
+    const reset = useCallback(() => {
       pendingIds.current.clear();
+      for (const t of timers.current.values()) clearTimeout(t);
+      timers.current.clear();
       setLoading(false);
       setError(null);
       setResponse(null);
-    }
+    }, []);
 
     return { call, response, loading, error, reset };
   }
@@ -487,19 +546,22 @@ export function createBridgeHooks<
       return () => clearInterval(interval);
     }, [pollInterval]);
 
-    async function flush() {
+    const flush = useCallback(async () => {
       await bridge.flushQueue();
       const newStats = bridge.getQueueStats();
       if (newStats) {
         setStats((prev) => (queueStatsEqual(prev, newStats) ? prev : newStats));
       }
-    }
+    }, []);
 
-    return {
-      stats,
-      flush,
-      hasMessages: stats ? stats.size > 0 : false,
-    };
+    return useMemo(
+      () => ({
+        stats,
+        flush,
+        hasMessages: stats ? stats.size > 0 : false,
+      }),
+      [stats, flush],
+    );
   }
 
   return {

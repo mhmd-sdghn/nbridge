@@ -6,6 +6,8 @@ interface InterceptEntry {
   onBackCallback: () => void;
   pathName: string;
   isActive: boolean;
+  /** Monotonic registration order, for cross-stack LIFO selection. */
+  order: number;
 }
 
 class BackInterceptManager {
@@ -41,7 +43,13 @@ class BackInterceptManager {
 
     const id = this.generateId();
     const stack = this.stacks.get(pathName) ?? [];
-    stack.push({ id, onBackCallback, pathName, isActive });
+    stack.push({
+      id,
+      onBackCallback,
+      pathName,
+      isActive,
+      order: ++this.counter,
+    });
     this.stacks.set(pathName, stack);
     this.syncTrap();
     return id;
@@ -94,36 +102,34 @@ class BackInterceptManager {
     return undefined;
   }
 
-  private findTopActiveFor(path: string): InterceptEntry | undefined {
-    const stack = this.stacks.get(path);
-    if (!stack) return undefined;
-    for (let i = stack.length - 1; i >= 0; i--) {
-      const entry = stack[i];
-      if (entry?.isActive) return entry;
-    }
-    return undefined;
+  private pathMatches(path: string, currentPath: string): boolean {
+    if (path === GLOBAL_PATH) return true;
+    return currentPath === path || currentPath.endsWith(`/${path}`);
   }
 
   /**
-   * Finds the top active entry for the current pathname.
+   * Finds the active entry that should fire for the current pathname.
    *
    * Path-specific entries match when:
    *   - pathName equals the full pathname exactly  ("/add-point/point-info-form")
    *   - OR pathname ends with "/pathName"          ("point-info-form")
+   * Global ("*") entries always match.
    *
-   * Falls back to the global ("*") stack if no path-specific match is found.
+   * Among ALL matching entries (path-scoped and global together), the one with
+   * the highest registration order wins, giving true LIFO: a dialog's global
+   * intercept registered after a page's scoped intercept fires first.
    */
   private findBestActiveEntry(currentPath: string): InterceptEntry | undefined {
+    let best: InterceptEntry | undefined;
     for (const [path, stack] of this.stacks.entries()) {
-      if (path === GLOBAL_PATH) continue;
-      const matches = currentPath === path || currentPath.endsWith(`/${path}`);
-      if (!matches) continue;
-      for (let i = stack.length - 1; i >= 0; i--) {
-        const entry = stack[i];
-        if (entry?.isActive) return entry;
+      if (!this.pathMatches(path, currentPath)) continue;
+      for (const entry of stack) {
+        if (entry.isActive && (!best || entry.order > best.order)) {
+          best = entry;
+        }
       }
     }
-    return this.findTopActiveFor(GLOBAL_PATH);
+    return best;
   }
 
   private hasAnyActiveIntercept(): boolean {

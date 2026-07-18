@@ -454,7 +454,7 @@ Fix: stamp a protocol discriminator (e.g. `__nbridge: 1` or a configurable chann
 
 Files: `HostRulesEngine.ts`, `resolve.ts`, `sources.ts`, `version.ts`, `types.ts`, `host/index.ts`.
 
-> Fix status: 3.11 (prototype-name crash) is fixed. The remaining Part 3 items are mostly DX and breaking API-shape changes (generic-parameter order 3.2, capability/variant grammar 3.3/3.4, trait-value enforcement 3.5, dunder-method promotion 3.6, override semantics 3.7, config-shape unification 3.9, storage-key scoping 3.1, etc.). They are deferred to a deliberate breaking host-API release rather than applied piecemeal, because the host subsystem has extensive tests keyed to the current shapes and these changes are best coordinated. They remain accurate as written.
+> Fix status: most Part 3 items are now fixed (3.1, 3.2, 3.4, 3.5, 3.6, 3.7, 3.8, 3.10-3.18, 3.20), several as breaking changes tracked in BREAKING_CHANGES.md. Three items remain intentionally NOT DONE because they are large reshapes with low correctness value and high churn: **3.3** (converge the capability config onto the variant `when` grammar) is a full rewrite of the capability shape, compiler, and every host test; the 3.4 `all` key already removed the main ergonomic pain, so the residual is stylistic. **3.9** (unify platform-detection config between `BridgeConfig` and `HostRulesConfig`) is a cross-subsystem redesign, DX not correctness. **3.19** (split `resolve.ts`/`HostRulesEngine.ts` by responsibility) is a pure file reorg. These are best done as one deliberate follow-up; they remain accurate as written.
 
 ### Medium
 
@@ -679,7 +679,7 @@ Fix: sequence ref (`const mySeq = ++seq.current`), guard every setData/setError/
 
 Fixed: added a monotonic `seq` ref plus a mounted ref; only the latest call's settlement updates state, and `reset()` bumps the sequence to invalidate in-flight calls.
 
-**4.8 Unstable hook return identities; `request` in effect deps closes an unbounded send loop**
+**4.8 [FIXED] Unstable hook return identities; `request` in effect deps closes an unbounded send loop**
 `src/react/createBridgeHooks.ts:56-98, 243-270, 321-342, 398-402`, `useBackIntercept.ts:54-58`
 
 `useBridgeSend` returns a fresh object with fresh functions each render (they close over only the module bridge); `request`/`reset`/`call`/`flush`/`activateIntercept`/`deActivateIntercept` are likewise unmemoized. Consumers following exhaustive-deps re-run effects every render; with `useBridgeRequest`, `useEffect(() => { void request(...) }, [request])` becomes an unbounded resend loop paced by each response.
@@ -697,7 +697,7 @@ Fixed: (a) `routerBackOrShutdown` now sets a `backInFlightRef` that is cleared o
 
 ### Low
 
-**4.10 `useBridgeRPC`: id registered only after the awaited send; no timeout; stale ids poison later correlation**
+**4.10 [FIXED] `useBridgeRPC`: id registered only after the awaited send; no timeout; stale ids poison later correlation**
 `src/react/createBridgeHooks.ts:301-335`
 
 The pending id is added after `await bridge.send(...)`, inverting BridgeManager's own register-before-send ordering (currently unreachable with shipped adapters, all of which deliver on a later macrotask, but fragile). Separately: no expiry: a host that never answers leaves `loading` stuck true forever, and the stale id remains in `pendingIds` where the no-id fallback branch can later attribute an unrelated id-less response to the dead call.
@@ -709,7 +709,7 @@ Fix: register the id pre-dispatch; add a timeout option that evicts the id, reco
 
 Consequence of 4.4(b): the buried trap entry same-URL-renders the old page and, with the listener gone, the first back press from the next page is a no-op; a second press is needed. Fix folded into 4.4 (keep the listener while any trap entry may remain; on landing on a trap with no active intercepts, self-pop it transparently).
 
-**4.12 Path-scoped entries always outrank later-registered global entries, violating documented LIFO**
+**4.12 [FIXED] Path-scoped entries always outrank later-registered global entries, violating documented LIFO**
 `src/next/navigation/BackInterceptManager.ts:116-127`
 
 `findBestActiveEntry` consults path-scoped stacks first, global only as fallback: a page-level scoped handler fires underneath a dialog's more-recent global intercept. Fix: select the highest registration-order active entry across all matching stacks (the monotonic counter already exists).
@@ -719,7 +719,7 @@ Consequence of 4.4(b): the buried trap entry same-URL-renders the old page and, 
 
 `selfPopInFlight` is a boolean consumed by whichever popstate arrives first; a queued user back press consumes it, the listener is torn down, and the manager's own `history.back()` then moves the user one extra entry back. Narrow window; note a state-nonce alone cannot disambiguate (both pops depart the same entry): needs ordering-based correlation or draining traversals before teardown.
 
-**4.14 Browser-mode `canNavigateBack` trusts `history.length` (inflated by trap pushes) and treats empty referrer as navigable**
+**4.14 [FIXED] Browser-mode `canNavigateBack` trusts `history.length` (inflated by trap pushes) and treats empty referrer as navigable**
 `src/next/navigation/utils.ts:70-78`
 
 WebViews load with empty referrer, and `history.length` stays inflated (bounded, +1 per released trap) after any intercept has armed: `canNavigateBack` returns true on the app's first page and `router.back()` no-ops instead of sending shutdown. Fix: subtract known trap pushes; treat empty referrer as unknown → shutdown.

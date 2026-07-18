@@ -73,8 +73,12 @@ export function canNavigateBack(
 
   const referrer = typeof document !== "undefined" ? document.referrer : "";
 
+  // An empty referrer is NOT proof that in-app back navigation is possible:
+  // WebViews load with an empty referrer, and history.length is inflated by the
+  // BackInterceptManager's trap pushes. Treat "unknown" as not-navigable so the
+  // caller takes the shutdown path instead of a router.back() that no-ops.
   if (referrer === "") {
-    return true;
+    return false;
   }
 
   try {
