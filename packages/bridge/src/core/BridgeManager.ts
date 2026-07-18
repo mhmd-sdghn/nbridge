@@ -356,7 +356,7 @@ export class BridgeManager<
 
     let incoming: BridgeMessage;
     try {
-      incoming = this.maybeDecompress(message);
+      incoming = await this.maybeDecompress(message);
     } catch (error) {
       // A corrupt compressed response would otherwise strand the caller
       // until timeout; reject the pending request immediately.
@@ -383,9 +383,11 @@ export class BridgeManager<
   }
 
   /** Decompress a `__compressed` payload; pass through everything else. */
-  private maybeDecompress(message: BridgeMessage): BridgeMessage {
+  private async maybeDecompress(
+    message: BridgeMessage,
+  ): Promise<BridgeMessage> {
     if (message.__compressed && typeof message.payload === "string") {
-      const payload = this.compressionManager.decompress(message.payload);
+      const payload = await this.compressionManager.decompress(message.payload);
       return { ...message, payload, __compressed: undefined };
     }
     return message;
@@ -423,8 +425,8 @@ export class BridgeManager<
         await Promise.all(
           entries
             .filter((entry) => isValidMessage(entry))
-            .map((entry) =>
-              this.processIncomingMessage(this.maybeDecompress(entry)),
+            .map(async (entry) =>
+              this.processIncomingMessage(await this.maybeDecompress(entry)),
             ),
         );
       }
@@ -669,12 +671,12 @@ export class BridgeManager<
         await this.middlewareManager.executeOutgoing(
           message,
           async (processedMessage) => {
-            this.sendMessageToAdapter(processedMessage);
+            await this.sendMessageToAdapter(processedMessage);
           },
           this,
         );
       } else {
-        this.sendMessageToAdapter(message);
+        await this.sendMessageToAdapter(message);
       }
     } catch (error) {
       this.metricsCollector?.recordFailed(message.id ?? message.type);
@@ -709,8 +711,8 @@ export class BridgeManager<
     return enqueued ?? false;
   }
 
-  private sendMessageToAdapter(message: BridgeMessage): void {
-    const wireMessage = this.maybeCompress(message);
+  private async sendMessageToAdapter(message: BridgeMessage): Promise<void> {
+    const wireMessage = await this.maybeCompress(message);
     try {
       this.adapter.send(wireMessage);
       this.logger.log("Sent message:", wireMessage);
@@ -725,7 +727,7 @@ export class BridgeManager<
     }
   }
 
-  private maybeCompress(message: BridgeMessage): BridgeMessage {
+  private async maybeCompress(message: BridgeMessage): Promise<BridgeMessage> {
     if (
       !this.config.compression.enabled ||
       message.payload === undefined ||
@@ -734,7 +736,7 @@ export class BridgeManager<
       return message;
     }
 
-    const compressed = this.compressionManager.compress(message.payload);
+    const compressed = await this.compressionManager.compress(message.payload);
     if (compressed === null) {
       return message;
     }

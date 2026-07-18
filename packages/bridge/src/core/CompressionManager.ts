@@ -1,4 +1,4 @@
-import pako from "pako";
+import type pako from "pako";
 import type { CompressionConfig, CompressionStats } from "../types";
 import type { BridgeLogger } from "../utils/helpers";
 
@@ -9,11 +9,22 @@ export class CompressionManager {
     bytesAfterCompression: 0,
     averageCompressionRatio: 0,
   };
+  // Lazy-loaded so pako (~45KB) stays out of the initial module graph for the
+  // majority of apps that never enable compression and whose hosts never send
+  // compressed payloads. Loaded on first compress()/decompress().
+  private pakoPromise: Promise<typeof pako> | null = null;
 
   constructor(
     private logger: BridgeLogger,
     private config: Required<CompressionConfig>,
   ) {}
+
+  private loadPako(): Promise<typeof pako> {
+    if (!this.pakoPromise) {
+      this.pakoPromise = import("pako").then((m) => m.default ?? m);
+    }
+    return this.pakoPromise;
+  }
 
   /**
    * Compress data to base64 string
@@ -22,7 +33,7 @@ export class CompressionManager {
    * @param data - Data to compress
    * @returns Compressed base64 string or null if below threshold
    */
-  public compress(data: unknown): string | null {
+  public async compress(data: unknown): Promise<string | null> {
     try {
       const json = JSON.stringify(data);
       const originalSize = new Blob([json]).size;
@@ -34,6 +45,7 @@ export class CompressionManager {
         return null;
       }
 
+      const pako = await this.loadPako();
       const compressed = pako.deflate(json);
       const base64 = this.uint8ArrayToBase64(compressed);
       const compressedSize = new Blob([base64]).size;
@@ -70,8 +82,9 @@ export class CompressionManager {
    * @returns Decompressed data
    * @throws Error if decompression fails
    */
-  public decompress(compressed: string): unknown {
+  public async decompress(compressed: string): Promise<unknown> {
     try {
+      const pako = await this.loadPako();
       const bytes = this.base64ToUint8Array(compressed);
       const decompressed = pako.inflate(bytes, { to: "string" });
       return JSON.parse(decompressed);

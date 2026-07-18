@@ -137,12 +137,14 @@ Fix: `if (compressedSize >= originalSize) return null;` so `maybeCompress` falls
 
 Fixed: `compress()` now returns `null` when the base64 result is not smaller than the original, so an incompressible payload ships uncompressed.
 
-**1.15 Synchronous pako deflate/inflate blocks the page's JS thread for exactly the large payloads compression targets**
+**1.15 [PARTIAL] Synchronous pako deflate/inflate blocks the page's JS thread for exactly the large payloads compression targets**
 `src/core/CompressionManager.ts:37, 66`
 
 `compress()`/`decompress()` run synchronously inside the send and receive pipelines. Compression only activates above the threshold, i.e. precisely where deflate is expensive (tens of ms for a few hundred KB of JSON in a mid-range WebView), freezing the page's JS/rendering/input pipeline. Bursts of large incoming compressed messages serialize these stalls.
 
 Fix: prefer native `CompressionStream`/`DecompressionStream` (async, off-thread; available in modern Android WebView and Safari 16.4+, matching the library's targets) with pako as fallback, or move pako into a Web Worker. Make compress/decompress async and await them in `maybeCompress`/`handleIncomingMessage`.
+
+Fixed so far: `compress`/`decompress` are now async and awaited through `maybeCompress`/`sendMessageToAdapter`/`maybeDecompress` (part of the 7.3 lazy-load). Remaining: pako still runs on the main thread (not yet moved to `CompressionStream`/a Worker), so a very large payload can still block briefly.
 
 **1.16 Persisted queue rewrites all of localStorage synchronously on every enqueue (O(N^2) aggregate)**
 `src/core/MessageQueue.ts:80-82, 276-296`
@@ -906,7 +908,7 @@ Fix: copy LICENSE into `packages/bridge/` (or a prepack copy step); npm then inc
 
 Fixed: copied the MIT LICENSE into `packages/bridge/LICENSE`; npm includes it in the tarball automatically (independent of the `files` field).
 
-**7.3 pako is in the module graph of every consumer, even with compression disabled**
+**7.3 [FIXED] pako is in the module graph of every consumer, even with compression disabled**
 `src/core/CompressionManager.ts:1`, `src/core/BridgeManager.ts:66, 142-145` (verified in dist: top-level `import pako from "pako"`)
 
 CompressionManager is unconditionally constructed (so incoming compressed payloads can always be decompressed) and imports pako statically: ~45KB in the initial graph for every app, including the majority that never enable compression. This undercuts the README's "tree-shakeable core" claim: the import is shakeable in theory but never shaken in practice.
@@ -915,7 +917,7 @@ Fix: lazy-load via `await import("pako")` inside `compress()`/`decompress()`: bo
 
 ### Low
 
-**7.4 Packaging polish**
+**7.4 [PARTIAL] Packaging polish**
 - ESM-only output breaks CJS consumers (default Jest, older toolchains). Clearly deliberate and documented (attw `--profile esm-only`); only act if issue reports appear: dual `format: ["esm", "cjs"]` is the fix then.
 - `exactOptionalPropertyTypes` is off (`tsconfig.json`); enabling it would police exactly the casts this review flags (`iframeParentOrigin as string` at BridgeManager.ts:130, the `as Required<...>` devTools cast at 174), turning them into explicit `| undefined` decisions. Pairs with fixing 1.2. (Partially addressed: `tsconfig` `target`/`lib` were bumped to ES2022 during the refactor so modern built-ins like `Object.hasOwn` are available; `exactOptionalPropertyTypes` itself is still off, and `normalizeConfig` (1.2 fix) already removed the `as Required<...>` casts.)
 - `build:css` duplicates the tsdown `onSuccess` tailwind command and is referenced by nothing; the two can silently drift (the published-CSS failure mode does NOT exist today: `onSuccess` runs on every build). Delete `build:css` or make `onSuccess` call it.
