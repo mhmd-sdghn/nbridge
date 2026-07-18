@@ -284,7 +284,7 @@ Bounded (window of 100, and `detailedTiming` is off by default) so the absolute 
 
 Fix: running sum + circular buffer for O(1) updates; name the constant.
 
-**1.34 DevTools history is count-bounded but byte-unbounded, pinning live payload references**
+**1.34 [FIXED] DevTools history is count-bounded but byte-unbounded, pinning live payload references**
 `src/core/BridgeDevTools.ts:130-135, 206-253`
 
 Message history retains live references to up to 50 payloads (multi-MB payloads stay pinned), and console interception retains up to 100 arbitrary argument object graphs. Dev-mode only (devtools is force-disabled in production builds), so memory-pressure, not a leak.
@@ -963,13 +963,13 @@ Source: `createBridgeBackNavigation.ts:94-112`, `nextHistorySession.ts` (truncat
 
 ### Medium
 
-**8.8 Queue retry/flush edge cases**: retry-cap exhaustion (attempts >= 3 drop + stats), re-queued messages surviving to next flush, concurrent flush re-entrancy (auto-flush timer + online listener + manual flushQueue can race). Source: `MessageQueue.ts:135-186`.
+**8.8 [FIXED] Queue retry/flush edge cases**: retry-cap exhaustion (attempts >= 3 drop + stats), re-queued messages surviving to next flush, concurrent flush re-entrancy (auto-flush timer + online listener + manual flushQueue can race). Source: `MessageQueue.ts:135-186`.
 
 **8.9 [FIXED] Offline transitions**: no test touches `navigator.onLine` or the `online` event listener registered in initialize (and removed in destroy). Source: `BridgeManager.ts:563-571, 246-254`. Stub `navigator.onLine`, dispatch `new Event("online")`.
 
 **8.10 [FIXED] Queue persistence**: only the legacy-key migration is tested. Missing: current-format round-trip across bridge instances, corrupt JSON in storage degrading to an empty queue (currently it can wedge the queue: finding 1.25), restored stats sanity. Source: `MessageQueue.ts:248-296`.
 
-**8.11 Batching failure paths**: failed envelope send (messages dropped after success was reported: finding 1.5), destroy with pending batch, batching + queue interplay. Source: `BatchManager.ts:89-120`.
+**8.11 [FIXED] Batching failure paths**: failed envelope send (messages dropped after success was reported: finding 1.5), destroy with pending batch, batching + queue interplay. Source: `BatchManager.ts:89-120`.
 
 **8.12 [PARTIAL] Compression edges**: corrupt/truncated `__compressed` payload (must not kill the bridge, should reject a pending response: finding 1.23), exact-threshold boundary, compression + batching round-trip (compressed entry inside a batch is broken today: finding 1.24). Source: `CompressionManager.ts:30, 63-74`.
 

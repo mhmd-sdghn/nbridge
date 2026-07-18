@@ -229,8 +229,19 @@ export class BridgeDevTools {
     message: BridgeMessage,
     direction: "sent" | "received",
   ): void {
+    // Snapshot the payload at capture so history is not a set of live
+    // references (later mutation would rewrite displayed history, and large
+    // live objects would stay pinned). Wire messages are JSON by contract, so
+    // a JSON round-trip is a safe, lossless-enough clone with a shallow fallback.
+    let snapshot: BridgeMessage = message;
+    try {
+      snapshot = JSON.parse(JSON.stringify(message)) as BridgeMessage;
+    } catch {
+      snapshot = { ...message };
+    }
+
     const devToolsMessage: DevToolsMessage = {
-      ...message,
+      ...snapshot,
       __devtools: {
         direction,
         timestamp: Date.now(),
@@ -240,7 +251,7 @@ export class BridgeDevTools {
     this.messages.push(devToolsMessage);
 
     // Enforce max message history limit
-    if (this.messages.length > this.config.maxMessageHistory) {
+    while (this.messages.length > this.config.maxMessageHistory) {
       this.messages.shift();
     }
 

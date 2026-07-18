@@ -205,6 +205,36 @@ describe("batching wiring", () => {
     await until(() => seen.length === 2);
     expect(seen).toEqual(["x", "y"]);
   });
+
+  it("unbatches into the offline queue when the batch envelope send fails (8.11)", async () => {
+    // The batch envelope postMessage fails once; the member messages must land
+    // in the offline queue rather than being dropped.
+    const native = installAndroidBridge({ failTimes: 1 });
+    const bridge = track(
+      createBridge({
+        batching: { enabled: true, maxSize: 2, maxWait: 5000 },
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-batchfail",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("a", { n: 1 });
+    await bridge.send("b", { n: 2 }); // fills batch -> flush -> envelope fails
+
+    await until(() => (bridge.getQueueStats()?.size ?? 0) === 2);
+    expect(bridge.getQueueStats()?.size).toBe(2);
+
+    // Native recovered; flushing the queue delivers the individual messages.
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type).sort()).toEqual(["a", "b"]);
+  });
 });
 
 describe("offline queue wiring", () => {
@@ -235,6 +265,36 @@ describe("offline queue wiring", () => {
     expect(native.sent[0]).toMatchObject({ type: "important" });
     expect(bridge.getQueueStats()?.size).toBe(0);
     expect(bridge.getQueueStats()?.completed).toBe(1);
+  });
+
+  it("drops a message after maxRetries exhausted flush attempts (8.8)", async () => {
+    // Adapter keeps failing; with maxRetries: 2 the message is re-queued once
+    // then dropped and counted failed (not retried forever).
+    const native = installAndroidBridge({ failTimes: 100 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-retrycap",
+          autoFlush: false,
+          flushInterval: 0,
+          maxRetries: 2,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("doomed", {}); // fails -> queued (attempts 0)
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue(); // attempt 1 fails -> re-queued (attempts 1)
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue(); // attempt 2 fails -> attempts 2 == maxRetries -> dropped
+    expect(bridge.getQueueStats()?.size).toBe(0);
+    expect(bridge.getQueueStats()?.failed).toBe(1);
   });
 
   it("honors priority ordering on flush", async () => {
