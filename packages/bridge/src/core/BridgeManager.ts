@@ -313,6 +313,13 @@ export class BridgeManager<
     return this.ready;
   }
 
+  /**
+   * Resolve once the bridge is ready. Behavior depends on `handshake.enabled`:
+   * with the handshake OFF (default) the bridge is ready as soon as local
+   * initialization completes, so this resolves effectively immediately; with it
+   * ON, it resolves only after the host acks the handshake and REJECTS if that
+   * does not happen within `timeout` ms.
+   */
   public async waitForReady(timeout = DEFAULT_READY_TIMEOUT_MS): Promise<void> {
     if (this.ready) return;
     if (this.readyError) throw this.readyError;
@@ -848,6 +855,12 @@ export class BridgeManager<
     return this.messageHandler.register(type, wrappedHandler);
   }
 
+  /**
+   * Remove a handler for `type`. Pass the same function reference given to
+   * `on`/`onWithResponse` (the onWithResponse wrapper is resolved internally).
+   * Omit `handler` to remove all handlers for `type` (same as
+   * `removeAllListeners(type)`).
+   */
   // biome-ignore lint/suspicious/noExplicitAny: Need to accept handlers of different types
   public off(type: string, handler?: BridgeMessageHandler<any>): void {
     // Translate a user handler registered via onWithResponse to its wrapper so
@@ -939,6 +952,11 @@ export class BridgeManager<
     return this.metricsCollector?.getMetrics() ?? null;
   }
 
+  /**
+   * Subscribe to periodic metrics updates (fired every `metrics.updateInterval`
+   * ms). Returns an unsubscribe function; call it to stop listening. No-op
+   * (returns a no-op unsubscribe) when metrics are disabled.
+   */
   public onMetricsUpdate(listener: MetricsListener): () => void {
     if (this.metricsCollector) {
       this.metricsCollector.addListener(listener);

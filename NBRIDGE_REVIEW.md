@@ -328,7 +328,7 @@ The lookup-and-validate block is near-verbatim in both methods, and a consumer c
 
 Fix: extract `private validateStage(type, value, stage)` and apply response validation inside send()'s `expectResponse` branch too.
 
-**1.37 JSDoc effort is inverted: noise on overloads, silence on behavior that needs explaining**
+**1.37 [FIXED] JSDoc effort is inverted: noise on overloads, silence on behavior that needs explaining**
 `src/core/BridgeManager.ts:414-436, 640-693, 767-807`
 
 The overload trios carry three JSDoc blocks each saying only "typed version"/"untyped version"/"implementation", while genuinely surprising behavior is undocumented at the class level: `flushQueue` bypassing middleware (explained only in an internal inline comment), `onMetricsUpdate` returning an unsubscribe function, `waitForReady` semantics changing entirely with `handshake.enabled`, `off` vs `removeAllListeners`. (Some one-liners are inherited from IBridgeManager via quick-info, but the substantive behavior notes exist nowhere consumer-visible.)
