@@ -76,6 +76,8 @@ export interface CompiledVariant {
 export interface ResolveOptions {
   androidInterface?: string;
   iosHandler?: string;
+  /** Optional platform source; used instead of detectPlatform() when present. */
+  platformSource?: () => BridgePlatform;
   versionSource: HostVersionSource;
   /** Explicit version from `setVersion`; `null` means none set. */
   explicitVersion: string | null;
@@ -121,6 +123,10 @@ export function resolveHost(options: ResolveOptions): ResolvedHost {
     platform = override.platform;
   } else if (isServer) {
     platform = "web";
+  } else if (options.platformSource) {
+    // Defer to the app-supplied source (e.g. the bridge) so the host engine and
+    // the bridge cannot disagree about the platform.
+    platform = options.platformSource();
   } else {
     platform = detectPlatform(options.androidInterface, options.iosHandler);
   }

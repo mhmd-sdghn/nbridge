@@ -256,6 +256,16 @@ export function defineHostRules<
   );
   const androidInterface = config.platform?.androidInterface;
   const iosHandler = config.platform?.iosHandler;
+  // Normalize the optional platform source (function or BridgeManager-like) to
+  // a plain `() => BridgePlatform`, so the engine can defer to the bridge's
+  // detection instead of running its own and risking a mismatch (3.9).
+  const detect = config.platform?.detect;
+  const platformSource: (() => BridgePlatform) | undefined =
+    typeof detect === "function"
+      ? detect
+      : detect
+        ? () => detect.getPlatform().platform
+        : undefined;
   const versionSource = resolveVersionSource(config.version);
   const { sources: traitSources, values: traitValues } = compileTraits(
     config.traits,
@@ -273,6 +283,7 @@ export function defineHostRules<
     resolved = resolveHost({
       androidInterface,
       iosHandler,
+      platformSource,
       versionSource,
       explicitVersion,
       traitSources,

@@ -120,6 +120,22 @@ export interface HostPlatformConfig {
   androidInterface?: string;
   /** @default "iosBridge" */
   iosHandler?: string;
+  /**
+   * Optional platform source. When provided, the engine uses it INSTEAD of its
+   * own `detectPlatform()` call, so an app that already has a bridge cannot let
+   * the two subsystems disagree about the platform:
+   *
+   * ```ts
+   * const bridge = createBridge(...);
+   * defineHostRules({ platform: { detect: () => bridge.getPlatform().platform } });
+   * ```
+   *
+   * A `BridgeManager`-like object (anything with `getPlatform()`) is also
+   * accepted directly.
+   */
+  detect?:
+    | (() => BridgePlatform)
+    | { getPlatform: () => { platform: BridgePlatform } };
 }
 
 /**

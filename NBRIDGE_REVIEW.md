@@ -543,7 +543,7 @@ Fixed (breaking, see BREAKING_CHANGES.md #3): version and trait overrides now us
 
 Fix (breaking): expose the parsed form on `HostInfo` (or make `version` the normalized string), export `parseVersion`/`satisfies`, and if both string fields stay, rename to communicate the gating (`version` vs `versionRaw` does not).
 
-**3.9 Platform-detection knobs configured twice in two shapes across `BridgeConfig` and `HostRulesConfig`; the two subsystems can disagree about the platform**
+**3.9 [FIXED] Platform-detection knobs configured twice in two shapes across `BridgeConfig` and `HostRulesConfig`; the two subsystems can disagree about the platform**
 `src/types/index.ts:98-104`, `src/host/types.ts:110-115, 141`
 
 BridgeConfig takes `androidInterface`/`iosHandler` flat; HostRulesConfig nests the identical options under `platform:`. An app using both must repeat the strings in two shapes; if they drift, BridgeManager and the host engine call `detectPlatform` with different arguments and report different platforms.

@@ -296,6 +296,30 @@ describe("setVersion / refresh / subscribe / override", () => {
   });
 });
 
+describe("platform source (3.9)", () => {
+  it("defers to a supplied platform detect function", () => {
+    const host = defineHostRules({
+      platform: { detect: () => "ios" },
+      capabilities: { nativeShare: { ios: true } },
+    });
+    // jsdom would detect "web", but the supplied source forces "ios".
+    expect(host.info().platform).toBe("ios");
+    expect(host.supports("nativeShare")).toBe(true);
+  });
+
+  it("accepts a BridgeManager-like object with getPlatform()", () => {
+    const fakeBridge = {
+      getPlatform: () => ({ platform: "android" as const }),
+    };
+    const host = defineHostRules({
+      platform: { detect: fakeBridge },
+      capabilities: { cam: { android: true } },
+    });
+    expect(host.info().platform).toBe("android");
+    expect(host.supports("cam")).toBe(true);
+  });
+});
+
 describe("SSR (window absent)", () => {
   it("resolves to web / null version", () => {
     vi.stubGlobal("window", undefined);
