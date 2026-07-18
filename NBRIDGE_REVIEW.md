@@ -848,7 +848,7 @@ Fixed (breaking, see BREAKING_CHANGES.md #2): removed `BridgeMessageType`/`Bridg
 
 Fix: after fixing 1.28 (per-frame dispatch), rework retry to wrap the transport (or document it must be registered LAST); make filter reject pending responses (needs middleware access to ResponseManager or an abort signal on the context); fix throttle with a promise-chain token; use an explicit envelope marker (`__nbridgeEncrypted: true`) for encryption; route logging middlewares through the BridgeLogger.
 
-Fixed so far: `retryMiddleware` now re-runs downstream correctly on the fixed chain (1.28), is outgoing-only (early-returns on incoming), and documents the register-last requirement; `throttleMiddleware` reserves a monotonic time slot before awaiting so a burst is genuinely spaced; `encryptionMiddleware` tags its envelope with `__nbridgeEncrypted: true` and only decrypts tagged envelopes. All covered by middleware.test.ts. Remaining: `filterMiddleware` still resolves `{ success: true }` for a blocked message and does not reject a pending `expectResponse` (needs an abort-signal on `MiddlewareContext` or ResponseManager access, a larger design change); the logging/debug/timing middlewares still use raw `console` rather than the BridgeLogger.
+Fixed so far: `retryMiddleware` now re-runs downstream correctly on the fixed chain (1.28), is outgoing-only (early-returns on incoming), and documents the register-last requirement; `throttleMiddleware` reserves a monotonic time slot before awaiting so a burst is genuinely spaced; `encryptionMiddleware` tags its envelope with `__nbridgeEncrypted: true` and only decrypts tagged envelopes. All covered by middleware.test.ts. `loggingMiddleware`/`timingMiddleware` now route through `context.bridge.log()` (the configured logger/destination) when a bridge is present, falling back to console otherwise. Remaining: `filterMiddleware` still resolves `{ success: true }` for a blocked message and does not reject a pending `expectResponse` (needs an abort-signal on `MiddlewareContext` or ResponseManager access, a larger design change); `debugMiddleware` still uses `console.group` directly (it is an explicit verbose console tool).
 
 **6.6 [PARTIAL] `useBridgeQueue` polls every second and re-renders unconditionally; the state-model split with createHostHooks is a real cost**
 `src/react/createBridgeHooks.ts:382-396`, `src/core/MessageQueue.ts` (`getStats` returns a fresh spread)
@@ -955,7 +955,7 @@ Fixed: added `middleware.test.ts` (7 tests) covering chain ordering with no skip
 **8.5 [FIXED] IframeAdapter is completely untested, including its security-relevant origin checks**
 Source: `IframeAdapter.ts:29, 32, 50, 63-82`. A regression here is cross-origin message injection or payload leak, invisible to every current test. Add `iframe-adapter.test.ts`: synthetic MessageEvents with wrong source/wrong origin (ignored), right origin (dispatched); assert `postMessage` targetOrigin; string vs object frames; destroy removes the listener.
 
-**8.6 Double bridge instances / shared `window.sendBridgeMessage` untested**
+**8.6 [FIXED] Double bridge instances / shared `window.sendBridgeMessage` untested**
 Source: `helpers.ts:65-83`, adapters' destroy. Add to `core-messaging.test.ts`: "destroying one bridge instance does not break another's incoming messages". Fails today (findings 2.3/6.1).
 
 **8.7 `routerBackOrShutdown` decision matrix and the entire session-history module are unexercised**
@@ -965,9 +965,9 @@ Source: `createBridgeBackNavigation.ts:94-112`, `nextHistorySession.ts` (truncat
 
 **8.8 Queue retry/flush edge cases**: retry-cap exhaustion (attempts >= 3 drop + stats), re-queued messages surviving to next flush, concurrent flush re-entrancy (auto-flush timer + online listener + manual flushQueue can race). Source: `MessageQueue.ts:135-186`.
 
-**8.9 Offline transitions**: no test touches `navigator.onLine` or the `online` event listener registered in initialize (and removed in destroy). Source: `BridgeManager.ts:563-571, 246-254`. Stub `navigator.onLine`, dispatch `new Event("online")`.
+**8.9 [FIXED] Offline transitions**: no test touches `navigator.onLine` or the `online` event listener registered in initialize (and removed in destroy). Source: `BridgeManager.ts:563-571, 246-254`. Stub `navigator.onLine`, dispatch `new Event("online")`.
 
-**8.10 Queue persistence**: only the legacy-key migration is tested. Missing: current-format round-trip across bridge instances, corrupt JSON in storage degrading to an empty queue (currently it can wedge the queue: finding 1.25), restored stats sanity. Source: `MessageQueue.ts:248-296`.
+**8.10 [FIXED] Queue persistence**: only the legacy-key migration is tested. Missing: current-format round-trip across bridge instances, corrupt JSON in storage degrading to an empty queue (currently it can wedge the queue: finding 1.25), restored stats sanity. Source: `MessageQueue.ts:248-296`.
 
 **8.11 Batching failure paths**: failed envelope send (messages dropped after success was reported: finding 1.5), destroy with pending batch, batching + queue interplay. Source: `BatchManager.ts:89-120`.
 
@@ -975,7 +975,7 @@ Source: `createBridgeBackNavigation.ts:94-112`, `nextHistorySession.ts` (truncat
 
 Fixed so far: added a "corrupt compressed payload is dropped without killing the bridge" test (the next valid message still dispatches) and an "incompressible payload ships uncompressed" test (covers 1.14). Still untested: exact-threshold boundary and the compression+batching round-trip.
 
-**8.13 iOS wire format**: nothing asserts iOS receives a raw object (the "Do not align" comment is load-bearing and unenforced): a helpful refactor stringifying it would break all iOS hosts and pass CI. Add a fake `window.webkit.messageHandlers` and assert postMessage got an object.
+**8.13 [FIXED] iOS wire format**: nothing asserts iOS receives a raw object (the "Do not align" comment is load-bearing and unenforced): a helpful refactor stringifying it would break all iOS hosts and pass CI. Add a fake `window.webkit.messageHandlers` and assert postMessage got an object.
 
 **8.14 Forward navigation while the back trap is armed**: all BackInterceptManager tests stay on one page; pushState-while-trapped is the exact scenario of finding 4.4. Add: "pushState after arming, then back presses: right callback exactly once, no eaten navigation".
 

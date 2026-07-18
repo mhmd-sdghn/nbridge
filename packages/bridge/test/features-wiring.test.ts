@@ -331,6 +331,78 @@ describe("offline queue wiring", () => {
     expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
   });
 
+  it("parks messages while offline and flushes them on the online event (8.9)", async () => {
+    const native = installAndroidBridge();
+    const setOnLine = (value: boolean) =>
+      Object.defineProperty(navigator, "onLine", {
+        configurable: true,
+        get: () => value,
+      });
+    setOnLine(false);
+    cleanup.push(() => setOnLine(true));
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-offline",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Offline: the message is parked, nothing hits the wire.
+    await bridge.send("later", { v: 1 });
+    expect(native.sent).toHaveLength(0);
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    // Back online: the online event flushes the queue.
+    setOnLine(true);
+    window.dispatchEvent(new Event("online"));
+    await until(() => native.sent.length === 1);
+    expect(native.sent[0]).toMatchObject({ type: "later" });
+  });
+
+  it("survives corrupt persisted queue data without wedging (8.10)", async () => {
+    const storageKey = "t-corrupt";
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        queueData: {
+          normal: [
+            { message: { type: "good", payload: {} }, priority: "normal" },
+            { notAMessage: true }, // malformed entry must be dropped, not crash
+          ],
+        },
+        stats: { size: 999, pending: 999, failed: 5, completed: 3 }, // bogus
+      }),
+    );
+    cleanup.push(() => localStorage.removeItem(storageKey));
+
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: true,
+          storageKey,
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Only the valid entry loads; stats are recomputed from actual contents.
+    expect(bridge.getQueueStats()?.size).toBe(1);
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["good"]);
+  });
+
   it("rejects a send instead of silently dropping when the queue is full", async () => {
     // Adapter always fails; queue caps at 1. First failed send is queued,
     // the second cannot be queued and must reject rather than resolve success.

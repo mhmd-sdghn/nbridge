@@ -11,10 +11,14 @@ import type { BridgeMessage, Middleware } from "../types";
  */
 export function loggingMiddleware(prefix = "Bridge"): Middleware {
   return async (message, context, next) => {
-    console.log(
-      `[${prefix}] ${context.direction.toUpperCase()} - ${message.type}`,
-      message,
-    );
+    // Prefer the bridge's configured logger (respects debug/logDestination);
+    // fall back to console when no bridge is on the context.
+    const line = `[${prefix}] ${context.direction.toUpperCase()} - ${message.type}`;
+    if (context.bridge) {
+      context.bridge.log(line, message);
+    } else {
+      console.log(line, message);
+    }
     await next(message);
   };
 }
@@ -34,9 +38,12 @@ export function timingMiddleware(
     if (onTiming) {
       onTiming(message.type, duration, context.direction);
     } else {
-      console.log(
-        `[Timing] ${context.direction} ${message.type}: ${duration.toFixed(2)}ms`,
-      );
+      const line = `[Timing] ${context.direction} ${message.type}: ${duration.toFixed(2)}ms`;
+      if (context.bridge) {
+        context.bridge.log(line);
+      } else {
+        console.log(line);
+      }
     }
   };
 }
