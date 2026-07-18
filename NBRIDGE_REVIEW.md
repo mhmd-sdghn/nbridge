@@ -958,7 +958,7 @@ Source: `IframeAdapter.ts:29, 32, 50, 63-82`. A regression here is cross-origin 
 **8.6 [FIXED] Double bridge instances / shared `window.sendBridgeMessage` untested**
 Source: `helpers.ts:65-83`, adapters' destroy. Add to `core-messaging.test.ts`: "destroying one bridge instance does not break another's incoming messages". Fails today (findings 2.3/6.1).
 
-**8.7 `routerBackOrShutdown` decision matrix and the entire session-history module are unexercised**
+**8.7 [FIXED] `routerBackOrShutdown` decision matrix and the entire session-history module are unexercised**
 Source: `createBridgeBackNavigation.ts:94-112`, `nextHistorySession.ts` (truncation :108-121, 50-entry cap :65-78, pop :123-135, cross-origin check :137-163, corrupt JSON :51-63). A wrong answer either `router.back()`s onto an external page or kills the WebView mid-flow (findings 4.5/4.9). Add `next-session-history.test.ts`: seed sessionStorage, simulate push/replace/popstate, assert canNavigateBack, truncation behavior, router-vs-shutdown per force flag.
 
 ### Medium
