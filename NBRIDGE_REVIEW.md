@@ -719,6 +719,8 @@ Consequence of 4.4(b): the buried trap entry same-URL-renders the old page and, 
 
 `selfPopInFlight` is a boolean consumed by whichever popstate arrives first; a queued user back press consumes it, the listener is torn down, and the manager's own `history.back()` then moves the user one extra entry back. Narrow window; note a state-nonce alone cannot disambiguate (both pops depart the same entry): needs ordering-based correlation or draining traversals before teardown.
 
+NOT DONE (deferred): this and 4.4/4.11 are the device-sensitive back-navigation items that require the manager's navigation-tracking rework. An attempt to patch `pushState` in the manager was reverted because it double-patches with `nextHistorySession`'s own pushState patch (fragile teardown ordering), risking a worse regression in apps that use both. These need coordinated design plus real-device testing rather than a blind unit-test-only change; the surrounding issues (4.3, 4.5, 4.9, 4.12, 4.14) are fixed.
+
 **4.14 [FIXED] Browser-mode `canNavigateBack` trusts `history.length` (inflated by trap pushes) and treats empty referrer as navigable**
 `src/next/navigation/utils.ts:70-78`
 
