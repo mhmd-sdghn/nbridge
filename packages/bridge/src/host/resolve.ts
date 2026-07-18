@@ -53,6 +53,8 @@ export interface CompiledTraitCondition {
  */
 export interface CompiledCapability {
   platforms: Partial<Record<BridgePlatform, CompiledCapabilityValue>>;
+  /** Fallback applied to any platform not explicitly listed (from the `all` key). */
+  all?: CompiledCapabilityValue;
   traits?: CompiledTraitCondition[];
 }
 
@@ -181,7 +183,8 @@ export function evaluateCapability(
   capability: CompiledCapability,
   host: ResolvedHost,
 ): boolean {
-  const value = capability.platforms[host.platform];
+  // Explicit platform key wins; otherwise fall back to the `all` default.
+  const value = capability.platforms[host.platform] ?? capability.all;
   if (value === undefined) return false;
   const base =
     value.kind === "bool"

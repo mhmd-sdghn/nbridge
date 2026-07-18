@@ -467,7 +467,7 @@ Fix: param-scoped default key, mirroring traitFromQuery (`nbridge:host-version:<
 
 Fixed (breaking, see BREAKING_CHANGES.md #4): non-`hv` params now default to a param-scoped key `nbridge:host-version:<param>`; the canonical `hv` keeps the unscoped key for back-compat. Pass an explicit `storageKey` to preserve the old shared key.
 
-**3.2 Generic parameter order flips between `HostRulesConfig` and `HostRules`**
+**3.2 [FIXED] Generic parameter order flips between `HostRulesConfig` and `HostRules`**
 `src/host/types.ts:121-131` vs `types.ts:216-220`, `HostRulesEngine.ts:208-214`, `src/react/createHostHooks.tsx:60-64`
 
 Config and `defineHostRules` are `<TTraits, TCaps, TVariants>`; the returned `HostRules` and `createHostHooks` are `<TCaps, TVariants, TTraits>`. Anyone writing explicit annotations must remember two orders for the same three parameters, and a swap can compile silently because every parameter has a permissive default constraint.
@@ -481,7 +481,7 @@ Because platform values and the trait gate share one bag, `compileCapabilities` 
 
 Fix (breaking): separate them: `{ on: { android: ">=8.2", ios: true }, when: { traits: ... } }`. Reject unknown platform keys at compile time with an error naming the capability.
 
-**3.4 Capabilities and variants use two different rule grammars; no platform-independent capability**
+**3.4 [FIXED] Capabilities and variants use two different rule grammars; no platform-independent capability**
 `src/host/types.ts:58-86`
 
 Variants get a uniform `when: { platform?, version?, traits? }`; capabilities are a platform-keyed map whose `when` supports only traits. Consequences: a trait-only capability must enumerate all four platforms; a cross-platform version gate must repeat the constraint four times; two mental models for one engine.

@@ -67,12 +67,20 @@ export interface CapabilityWhen<TTraits = TraitsConfig> {
  * An absent platform key (or an explicit `undefined`) means the capability is
  * `false` on that platform — a missing value is fail-safe, never enabling.
  *
+ * Use the `all` key as a fallback for every platform not explicitly listed, so
+ * a trait-only or cross-platform capability need not enumerate all four
+ * platforms (an explicit platform key still overrides `all`).
+ *
  * An optional `when` gate adds trait conditions ANDed on top of the per-platform
  * result. It never enables a platform you did not list.
  */
 export type CapabilityRule<TTraits = TraitsConfig> = Partial<
   Record<BridgePlatform, boolean | VersionConstraint>
-> & { when?: CapabilityWhen<TTraits> };
+> & {
+  /** Fallback for any platform not explicitly listed above. */
+  all?: boolean | VersionConstraint;
+  when?: CapabilityWhen<TTraits>;
+};
 
 /**
  * The match clause of a variant rule. `platform`, `version`, and `traits` are
@@ -214,9 +222,12 @@ export type VariantValue<V> = V extends {
  * async hosts push a late version via `setVersion`.
  */
 export interface HostRules<
+  // Parameter order matches HostRulesConfig / defineHostRules (declaration
+  // order: traits, capabilities, variants) so the same three type params never
+  // need to be reordered between config and instance annotations.
+  TTraits extends TraitsConfig = TraitsConfig,
   TCaps extends Record<string, CapabilityRule> = Record<string, CapabilityRule>,
   TVariants extends Record<string, VariantDef> = Record<string, VariantDef>,
-  TTraits extends TraitsConfig = TraitsConfig,
 > {
   /**
    * Whether a capability is enabled on the resolved host. Fail-safe: an unknown

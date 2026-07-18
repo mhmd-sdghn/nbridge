@@ -69,6 +69,7 @@ function compileCapabilities(
 
   for (const [name, rule] of Object.entries(capabilities)) {
     const platforms: CompiledCapability["platforms"] = {};
+    let all: CompiledCapability["all"];
     let traits: CompiledTraitCondition[] | undefined;
 
     for (const [key, value] of Object.entries(rule)) {
@@ -82,29 +83,57 @@ function compileCapabilities(
         continue;
       }
 
-      const platform = key as BridgePlatform;
-      const platformValue = value as boolean | string | string[] | undefined;
+      const raw = value as boolean | string | string[] | undefined;
       // An explicit `undefined` is treated the same as an absent key: the
       // capability is off on that platform (fail-safe: a missing flag never
       // silently enables a capability).
-      if (platformValue === undefined) continue;
-      if (typeof platformValue === "boolean") {
-        platforms[platform] = { kind: "bool", value: platformValue };
+      if (raw === undefined) continue;
+
+      if (key === "all") {
+        all = compileCapabilityValue(raw, name, "all");
         continue;
       }
-      const constraints = parseConstraints(platformValue);
-      if (constraints === null) {
+
+      // Reject unknown keys (typos like `webb`) instead of silently compiling a
+      // dead platform that never matches.
+      if (!KNOWN_PLATFORMS.has(key)) {
         throw new Error(
-          `[nbridge] Invalid version constraint in capability "${name}" for platform "${platform}": ${JSON.stringify(platformValue)}`,
+          `[nbridge] Unknown key "${key}" in capability "${name}". Expected a platform (${[...KNOWN_PLATFORMS].join(", ")}), "all", or "when".`,
         );
       }
-      platforms[platform] = { kind: "constraints", constraints };
+
+      platforms[key as BridgePlatform] = compileCapabilityValue(raw, name, key);
     }
 
-    compiled[name] = { platforms, traits };
+    compiled[name] = { platforms, all, traits };
   }
 
   return compiled;
+}
+
+const KNOWN_PLATFORMS: ReadonlySet<string> = new Set<BridgePlatform>([
+  "android",
+  "ios",
+  "iframe",
+  "web",
+]);
+
+/** Compile one capability value (boolean or version constraint). */
+function compileCapabilityValue(
+  raw: boolean | string | string[],
+  capabilityName: string,
+  key: string,
+): CompiledCapability["all"] {
+  if (typeof raw === "boolean") {
+    return { kind: "bool", value: raw };
+  }
+  const constraints = parseConstraints(raw);
+  if (constraints === null) {
+    throw new Error(
+      `[nbridge] Invalid version constraint in capability "${capabilityName}" for "${key}": ${JSON.stringify(raw)}`,
+    );
+  }
+  return { kind: "constraints", constraints };
 }
 
 function compileVariants(
@@ -218,7 +247,7 @@ export function defineHostRules<
   const TVariants extends Record<string, VariantDef<string, TTraits>>,
 >(
   config: HostRulesConfig<TTraits, TCaps, TVariants>,
-): HostRules<TCaps, TVariants, TTraits> {
+): HostRules<TTraits, TCaps, TVariants> {
   const compiledCapabilities = compileCapabilities(
     (config.capabilities ?? {}) as Record<string, CapabilityRule>,
   );
@@ -280,7 +309,7 @@ export function defineHostRules<
     for (const listener of listeners) listener();
   }
 
-  const engine: HostRules<TCaps, TVariants, TTraits> = {
+  const engine: HostRules<TTraits, TCaps, TVariants> = {
     supports(name) {
       // hasOwnProperty guards against prototype-inherited names ("constructor",
       // "toString", ...) that would otherwise resolve to Object.prototype

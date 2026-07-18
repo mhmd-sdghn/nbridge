@@ -59,10 +59,10 @@ export interface VariantSwitchProps<K extends string, Value extends string> {
  * export const { useCapability, CapabilityGate } = createHostHooks(host);
  */
 export function createHostHooks<
-  TCaps extends Record<string, CapabilityRule>,
-  TVariants extends Record<string, VariantDef>,
   TTraits extends TraitsConfig = TraitsConfig,
->(host: HostRules<TCaps, TVariants, TTraits>) {
+  TCaps extends Record<string, CapabilityRule> = Record<string, CapabilityRule>,
+  TVariants extends Record<string, VariantDef> = Record<string, VariantDef>,
+>(host: HostRules<TTraits, TCaps, TVariants>) {
   type Cap = CapabilityName<TCaps>;
   type Trait = TraitName<TTraits>;
 

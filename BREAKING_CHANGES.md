@@ -140,3 +140,26 @@ resolves to `null` (unknown), with a dev-mode `console.warn`.
 **Migrate:** ensure your sources emit values within the declared list; if you
 intentionally allowed arbitrary values, remove the `values` list from that
 trait's definition.
+
+---
+
+## 8. Host generic parameter order unified; capability config validated (findings 3.2, 3.4)
+
+**Why:** `HostRules` / `createHostHooks` used `<TCaps, TVariants, TTraits>`
+while `HostRulesConfig` / `defineHostRules` used `<TTraits, TCaps, TVariants>`,
+so the same three type params had two orders. Separately, an unknown platform
+key in a capability (e.g. a typo `webb`) silently compiled a dead rule.
+
+**Change:**
+- `HostRules<...>` and `createHostHooks<...>` now take `<TTraits, TCaps,
+  TVariants>`, matching the config.
+- A capability may use an `all` key as a fallback for unlisted platforms.
+- An unknown key in a capability rule (not a platform, `all`, or `when`) now
+  throws at `defineHostRules()` time.
+
+**Migrate:**
+- Only affects code with EXPLICIT `HostRules<...>` / `createHostHooks<...>`
+  type arguments (inference is unchanged): reorder them to traits, caps,
+  variants.
+- Fix or remove any misspelled platform keys in capability rules (they were
+  previously dead and now error).
