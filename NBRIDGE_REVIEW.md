@@ -994,7 +994,7 @@ Source: `createBridgeBackNavigation.ts:94-112`, `nextHistorySession.ts` (truncat
 
 **8.11 [FIXED] Batching failure paths**: failed envelope send (messages dropped after success was reported: finding 1.5), destroy with pending batch, batching + queue interplay. Source: `BatchManager.ts:89-120`.
 
-**8.12 [PARTIAL] Compression edges**: corrupt/truncated `__compressed` payload (must not kill the bridge, should reject a pending response: finding 1.23), exact-threshold boundary, compression + batching round-trip (compressed entry inside a batch is broken today: finding 1.24). Source: `CompressionManager.ts:30, 63-74`.
+**8.12 [FIXED] Compression edges**: corrupt/truncated `__compressed` payload (must not kill the bridge, should reject a pending response: finding 1.23), exact-threshold boundary, compression + batching round-trip (compressed entry inside a batch is broken today: finding 1.24). Source: `CompressionManager.ts:30, 63-74`.
 
 Fixed so far: added a "corrupt compressed payload is dropped without killing the bridge" test (the next valid message still dispatches) and an "incompressible payload ships uncompressed" test (covers 1.14). Still untested: exact-threshold boundary and the compression+batching round-trip.
 

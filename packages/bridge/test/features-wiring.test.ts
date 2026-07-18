@@ -59,6 +59,54 @@ describe("compression wiring", () => {
     expect(native.sent[0]?.payload).toEqual({ a: 1 });
   });
 
+  it("compresses a payload at/above the threshold boundary (8.12)", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({ compression: { enabled: true, threshold: 50 } }),
+      native.uninstall,
+    );
+
+    // Well below threshold: uncompressed.
+    await bridge.send("tiny", { a: 1 });
+    expect(native.sent[0]?.__compressed).toBeUndefined();
+
+    // Comfortably above threshold and compressible: compressed.
+    await bridge.send("big", { text: "a".repeat(500) });
+    expect(native.sent[1]?.__compressed).toBe(true);
+  });
+
+  it("round-trips a compressed batch envelope (compression + batching, 8.12)", async () => {
+    // Sender: compression + batching both on. The batch envelope is large and
+    // compressible, so it goes on the wire compressed.
+    const nativeSender = installAndroidBridge();
+    const sender = createBridge({
+      compression: { enabled: true, threshold: 50 },
+      batching: { enabled: true, maxSize: 2, maxWait: 5000 },
+    });
+    await sender.send("a", { text: "x".repeat(300) });
+    await sender.send("b", { text: "y".repeat(300) });
+    await until(() => nativeSender.sent.length === 1);
+    const wire = nativeSender.sent[0] as BridgeMessage;
+    expect(wire.type).toBe(PROTOCOL.BATCH);
+    expect(wire.__compressed).toBe(true);
+    sender.destroy();
+
+    // Receiver decompresses the envelope and unpacks the members.
+    const nativeRecv = installAndroidBridge();
+    const receiver = track(createBridge(), nativeRecv.uninstall);
+    const seen: string[] = [];
+    receiver.on("a", () => {
+      seen.push("a");
+    });
+    receiver.on("b", () => {
+      seen.push("b");
+    });
+
+    receiveFromNative(wire);
+    await until(() => seen.length === 2);
+    expect(seen.sort()).toEqual(["a", "b"]);
+  });
+
   it("decompresses incoming compressed payloads even when local compression is off", async () => {
     const nativeA = installAndroidBridge();
     // Sender bridge with compression on, to produce a compressed wire message
