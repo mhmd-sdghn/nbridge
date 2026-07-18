@@ -10,28 +10,28 @@ Findings are fixed in place; each heading carries a status marker:
 - **[PARTIAL]**: some sub-items fixed; remainder noted inline.
 - No marker: not addressed (see the deferred list below).
 
-**Status (119 findings): 93 FIXED, 15 PARTIAL, 11 not addressed.** The test
-suite grew from 116 to 153 passing tests; typecheck, lint, and build are green.
-Breaking changes are logged in `BREAKING_CHANGES.md`.
+**Status (119 findings): 99 FIXED, 12 PARTIAL, 8 not addressed.** The test
+suite grew from 116 to 157 passing tests; typecheck, lint, and build are green.
+Breaking changes are logged in `BREAKING_CHANGES.md`. The 12 PARTIAL findings
+each have their core fixed with the residual noted inline.
 
-The 11 not-addressed findings are intentionally deferred, each because it is a
-large structural refactor or device-sensitive work whose risk outweighs its
-correctness value; they are documented inline and summarized here:
+The 8 not-addressed findings are intentionally deferred, each a large
+structural refactor, a new cross-tab feature, or device-sensitive work whose
+risk outweighs its correctness value (the bugs they surround are fixed). They
+are documented inline and summarized here:
 
-- **1.8** BridgeManager decomposition: large structural refactor (900-line
-  class); the discrete bugs inside it are fixed, the reorg is not.
-- **1.26** multi-tab queue safety: needs cross-tab storage-event coordination
-  / locking; a design change, not a localized fix.
-- **1.37** JSDoc quality: cosmetic.
-- **2.7** shared adapter base classes: pure structure; behavior already
-  correct after the per-adapter fixes.
-- **3.3 / 3.9 / 3.19** capability-grammar rewrite / platform-config unification
-  / host file split: large host-API reshapes; the `all` key (3.4) already
-  removed the main ergonomic pain.
+- **1.8** BridgeManager decomposition: reorg of a ~900-line class; the discrete
+  bugs inside it are fixed, only the structural split is deferred.
+- **1.26** multi-tab queue safety: needs cross-tab storage-event coordination /
+  locking; a new feature, not a localized fix.
+- **3.3** capability-grammar rewrite: rewrites the config shape, compiler, and
+  every host test; the `all` key (3.4) already removed the main ergonomic pain.
+- **3.19** host file split: pure structure (moving compiled types / compile
+  functions across files); the review notes it is defensible as-is.
 - **4.4 / 4.11 / 4.13 / 8.14** buried-trap-after-pushState and the queued-back
   race: device-sensitive history-tracking rework; an attempted pushState patch
-  was reverted (double-patches with the session tracker). Surrounding back-nav
-  issues (4.3, 4.5, 4.9, 4.12, 4.14) are fixed.
+  was reverted (it double-patches with the session tracker). Surrounding
+  back-nav issues (4.3, 4.5, 4.9, 4.12, 4.14) are fixed.
 
 Severity meanings:
 
