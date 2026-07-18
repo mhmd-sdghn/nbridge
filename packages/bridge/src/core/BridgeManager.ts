@@ -7,6 +7,7 @@ import {
   PROTOCOL,
   RESPONSE_SUFFIX,
 } from "../constants/protocol";
+import { isFilteredMessageError } from "../middleware";
 import type {
   BatchStats,
   BridgeConfig,
@@ -682,7 +683,9 @@ export class BridgeManager<
     } catch (error) {
       this.metricsCollector?.recordFailed(message.id ?? message.type);
 
-      if (queueable) {
+      // A filter-middleware block is intentional, not a transient failure:
+      // surface it to the caller without queueing it for retry.
+      if (queueable && !isFilteredMessageError(error)) {
         const enqueued = this.enqueue(message, options);
         if (enqueued) {
           this.logger.warn(

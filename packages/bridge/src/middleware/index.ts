@@ -87,8 +87,35 @@ export function transformMiddleware(
 }
 
 /**
+ * Error thrown by `filterMiddleware` when it blocks a message. The bridge
+ * treats this specially: the send rejects with it (so `send()` does not
+ * falsely resolve `{ success: true }` and an `expectResponse` call does not
+ * hang until timeout), and it is NOT re-queued for retry (blocking is
+ * intentional, not a transient failure).
+ */
+export class FilteredMessageError extends Error {
+  /** Marker the send pipeline checks to skip offline-queue retry. */
+  readonly nbridgeFiltered = true;
+
+  constructor(messageType: string) {
+    super(`Message "${messageType}" was blocked by filterMiddleware`);
+    this.name = "FilteredMessageError";
+  }
+}
+
+/** True if an error is a `FilteredMessageError` (marker-based, cross-realm safe). */
+export function isFilteredMessageError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    (error as { nbridgeFiltered?: boolean }).nbridgeFiltered === true
+  );
+}
+
+/**
  * Filter middleware
- * Blocks messages that don't match the filter
+ * Blocks messages that don't match the filter. A blocked message rejects the
+ * send with {@link FilteredMessageError} instead of silently succeeding.
  */
 export function filterMiddleware(
   filter: (message: BridgeMessage, direction: string) => boolean,
@@ -96,8 +123,13 @@ export function filterMiddleware(
   return async (message, context, next) => {
     if (filter(message, context.direction)) {
       await next(message);
+      return;
     }
-    // Message blocked - don't call next
+    // Blocked. On the incoming direction there is no caller to reject, so just
+    // stop the chain; on outgoing, throw so the send rejects and is not queued.
+    if (context.direction === "outgoing") {
+      throw new FilteredMessageError(message.type);
+    }
   };
 }
 

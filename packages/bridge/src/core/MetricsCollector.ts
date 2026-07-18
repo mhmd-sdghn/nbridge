@@ -176,6 +176,10 @@ export class MetricsCollector {
 
   private startPeriodicUpdates(): void {
     this.updateTimer = setInterval(() => {
+      // Recompute the rate on the timer so it decays toward 0 when traffic
+      // stops (it was previously only recomputed on send, freezing at the last
+      // observed value forever).
+      this.updateMessagesPerSecond();
       const metrics = this.getMetrics();
       this.notifyListeners(metrics);
     }, this.config.updateInterval);

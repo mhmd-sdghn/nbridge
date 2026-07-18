@@ -108,13 +108,14 @@ describe("built-in middlewares", () => {
     expect(received[0]).toEqual({ encrypted: "not-ours" });
   });
 
-  it("filter middleware blocks matching outgoing messages from the wire", async () => {
+  it("filter middleware blocks matching outgoing messages and rejects the send", async () => {
     const native = installAndroidBridge();
     const bridge = track(createBridge(), native.uninstall);
     bridge.use(filterMiddleware((message) => message.type !== "blocked"));
 
     await bridge.send("allowed", { a: 1 });
-    await bridge.send("blocked", { a: 2 });
+    // A blocked message rejects (no silent success), and never reaches the wire.
+    await expect(bridge.send("blocked", { a: 2 })).rejects.toThrow(/blocked/i);
 
     expect(native.sent.map((m) => m.type)).toEqual(["allowed"]);
   });

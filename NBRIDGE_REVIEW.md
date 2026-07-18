@@ -217,7 +217,7 @@ The `_response`/`_error` suffix convention is hardcoded at four sites and never 
 
 Fix: hoist `RESPONSE_SUFFIX`/`ERROR_SUFFIX` and an `isResponseType()` helper into `constants/protocol.ts` and use them at all sites; document the convention for native implementers. Longer term, mark responses structurally on the envelope (`replyTo: id`) so user type names can never collide (pairs with 1.1).
 
-**1.22 [PARTIAL] Metrics are computed on the wrong events: successRate is stale, can read 100% while everything fails, and can go negative; messagesPerSecond never decays**
+**1.22 [FIXED] Metrics are computed on the wrong events: successRate is stale, can read 100% while everything fails, and can go negative; messagesPerSecond never decays**
 `src/core/MetricsCollector.ts:41-55, 74-89, 104-126`
 
 (1) `updateSuccessRate` only runs on failure/timeout, so after one failure the rate stays frozen no matter how many successes follow, and the periodic broadcast pushes the stale value forever. (2) `messagesSent` increments only after a successful `adapter.send`, while `recordFailed` fires in paths where `recordSent` never ran: with an always-throwing adapter, sent stays 0 and the `total > 0` guard reports successRate 1 (100%) while everything fails; mixed traffic can push it negative (2 sent, 5 failed = -1.5). (3) `updateMessagesPerSecond` only runs inside `recordSent`, so when traffic stops the rate freezes at its last value instead of decaying to 0.
@@ -860,7 +860,7 @@ Fix (breaking): remove from the public API; demote to a docs example of a schema
 
 Fixed (breaking, see BREAKING_CHANGES.md #2): removed `BridgeMessageType`/`BridgeMessageTypeValue` from the public API and deleted `src/constants/messageTypes.ts`. Consumers use plain constants or a schema registry.
 
-**6.5 [PARTIAL] Built-in middlewares have real defects beyond zero test coverage**
+**6.5 [FIXED] Built-in middlewares have real defects beyond zero test coverage**
 `src/middleware/index.ts`
 
 - `retryMiddleware` (101-120): retrying by calling `next()` again interacts with the shared-index chain (1.28): retries skip every middleware registered after it (e.g. encryption → plaintext on the wire) and go straight to the terminal handler. Also, on the incoming direction it re-dispatches handlers on failure, duplicating side effects; it is documented "outgoing only" but not enforced.

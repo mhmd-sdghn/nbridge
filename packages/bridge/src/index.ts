@@ -67,7 +67,9 @@ export {
 export {
   debugMiddleware,
   encryptionMiddleware,
+  FilteredMessageError,
   filterMiddleware,
+  isFilteredMessageError,
   loggingMiddleware,
   metadataMiddleware,
   retryMiddleware,
