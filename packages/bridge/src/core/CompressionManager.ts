@@ -1,6 +1,6 @@
 import type pako from "pako";
 import type { CompressionConfig, CompressionStats } from "../types";
-import type { BridgeLogger } from "../utils/helpers";
+import { type BridgeLogger, byteLength } from "../utils/helpers";
 
 export class CompressionManager {
   private stats: CompressionStats = {
@@ -36,7 +36,7 @@ export class CompressionManager {
   public async compress(data: unknown): Promise<string | null> {
     try {
       const json = JSON.stringify(data);
-      const originalSize = new Blob([json]).size;
+      const originalSize = byteLength(json);
 
       if (originalSize < this.config.threshold) {
         this.logger.log(
@@ -48,7 +48,7 @@ export class CompressionManager {
       const pako = await this.loadPako();
       const compressed = pako.deflate(json);
       const base64 = this.uint8ArrayToBase64(compressed);
-      const compressedSize = new Blob([base64]).size;
+      const compressedSize = byteLength(base64);
 
       // base64 adds ~33% overhead, so incompressible payloads (already-encoded
       // images, random tokens) come out LARGER. Fall back to the uncompressed

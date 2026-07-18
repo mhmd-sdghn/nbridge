@@ -56,6 +56,28 @@ export function safeStringify(value: unknown): string {
   }
 }
 
+// One shared TextEncoder for byte-length measurement (avoids per-call
+// allocation and the heavier `new Blob([str]).size` idiom).
+const sharedTextEncoder =
+  typeof TextEncoder !== "undefined" ? new TextEncoder() : null;
+
+/** UTF-8 byte length of a string, using a shared TextEncoder when available. */
+export function byteLength(str: string): number {
+  if (sharedTextEncoder) return sharedTextEncoder.encode(str).length;
+  // Fallback (very old environments): count UTF-8 bytes without an encoder.
+  let bytes = 0;
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff) {
+      bytes += 4;
+      i++; // surrogate pair
+    } else bytes += 3;
+  }
+  return bytes;
+}
+
 export function safeParse<T = unknown>(value: string | unknown): T | null {
   try {
     if (typeof value === "string") {

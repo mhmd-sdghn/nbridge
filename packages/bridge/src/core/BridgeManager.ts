@@ -32,6 +32,7 @@ import type {
 } from "../types/schema";
 import {
   BridgeLogger,
+  byteLength,
   createMessage,
   isValidMessage,
   safeStringify,
@@ -60,7 +61,7 @@ interface ReadyWaiter {
 }
 
 function wireSize(message: BridgeMessage): number {
-  return new TextEncoder().encode(safeStringify(message)).length;
+  return byteLength(safeStringify(message));
 }
 
 export class BridgeManager<

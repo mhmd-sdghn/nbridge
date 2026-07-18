@@ -35,6 +35,8 @@ export class MessageQueue {
     completed: 0,
   };
   private flushTimer?: ReturnType<typeof setInterval>;
+  private persistTimer?: ReturnType<typeof setTimeout>;
+  private pageHideListener: (() => void) | null = null;
 
   constructor(
     private logger: BridgeLogger,
@@ -42,6 +44,32 @@ export class MessageQueue {
   ) {
     this.loadFromStorage();
     this.setupAutoFlush();
+
+    // Flush any pending debounced write when the page is being hidden/unloaded,
+    // so a debounced enqueue is not lost on navigation away.
+    if (this.config.persist && typeof window !== "undefined") {
+      this.pageHideListener = () => this.flushPersist();
+      window.addEventListener("pagehide", this.pageHideListener);
+      window.addEventListener("visibilitychange", this.pageHideListener);
+    }
+  }
+
+  /** Schedule a trailing persist write, coalescing bursts of enqueues. */
+  private persistDebounced(): void {
+    if (this.persistTimer !== undefined) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.saveToStorage();
+    }, 150);
+  }
+
+  /** Write immediately, cancelling any pending debounced write. */
+  private flushPersist(): void {
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    if (this.config.persist) this.saveToStorage();
   }
 
   public enqueue(
@@ -82,8 +110,10 @@ export class MessageQueue {
       `Queued message: ${message.type} with priority ${priority} (queue size: ${this.stats.size})`,
     );
 
+    // Debounce persistence: without this, filling the queue while offline
+    // rewrites the entire localStorage blob on every enqueue (O(N^2) aggregate).
     if (this.config.persist) {
-      this.saveToStorage();
+      this.persistDebounced();
     }
 
     return true;
@@ -328,9 +358,14 @@ export class MessageQueue {
       clearInterval(this.flushTimer);
     }
 
-    if (this.config.persist) {
-      this.saveToStorage();
+    if (this.pageHideListener && typeof window !== "undefined") {
+      window.removeEventListener("pagehide", this.pageHideListener);
+      window.removeEventListener("visibilitychange", this.pageHideListener);
+      this.pageHideListener = null;
     }
+
+    // Flush any pending debounced write (also cancels the timer).
+    this.flushPersist();
 
     // Clear all priority queues
     for (const priorityQueue of this.queue.values()) {

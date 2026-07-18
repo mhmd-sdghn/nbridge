@@ -146,14 +146,14 @@ Fix: prefer native `CompressionStream`/`DecompressionStream` (async, off-thread;
 
 Fixed so far: `compress`/`decompress` are now async and awaited through `maybeCompress`/`sendMessageToAdapter`/`maybeDecompress` (part of the 7.3 lazy-load). Remaining: pako still runs on the main thread (not yet moved to `CompressionStream`/a Worker), so a very large payload can still block briefly.
 
-**1.16 Persisted queue rewrites all of localStorage synchronously on every enqueue (O(N^2) aggregate)**
+**1.16 [FIXED] Persisted queue rewrites all of localStorage synchronously on every enqueue (O(N^2) aggregate)**
 `src/core/MessageQueue.ts:80-82, 276-296`
 
 With `persist` enabled, every `enqueue` JSON.stringifies ALL queued messages and synchronously writes the whole blob. Filling the queue while offline (the primary use case) costs O(N^2) serialization: with maxSize 100 and 10KB payloads, the 100th enqueue stringifies ~1MB and cumulative churn is ~50MB, all in blocking main-thread writes.
 
 Fix: coalesce persistence: mark dirty and flush on a trailing debounce (100-250ms), plus on `pagehide`/`visibilitychange` and after `flush()`. `destroy()` already saves, so shutdown persistence is preserved.
 
-**1.17 Per-message serialization waste: payloads are stringified up to three times; two different byte-measuring idioms; per-call TextEncoder**
+**1.17 [FIXED] Per-message serialization waste: payloads are stringified up to three times; two different byte-measuring idioms; per-call TextEncoder**
 `src/core/BridgeManager.ts:50-52`, `src/core/CompressionManager.ts:27-39`, `src/core/adapters/AndroidAdapter.ts:47`
 
 `wireSize` builds `new TextEncoder()` per call, stringifies the full message, and allocates a Uint8Array copy just to read `.length`; it runs for every sent AND received message when metrics are enabled. `CompressionManager.compress` independently stringifies the payload and measures it with `new Blob([json]).size` (a heavier allocation, and a second idiom for the same concept); for sub-threshold messages (the common case) that stringify is discarded and the Android adapter stringifies the whole message again. Worst case (compression + metrics, Android): three JSON.stringify passes per send.
