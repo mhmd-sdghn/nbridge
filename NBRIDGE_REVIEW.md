@@ -513,7 +513,7 @@ Variants get a uniform `when: { platform?, version?, traits? }`; capabilities ar
 
 Fix (breaking): add an `all`/`default` platform key, or better, converge capabilities on the variant grammar so `CapabilityWhen` can carry platform and version too.
 
-**3.5 [PARTIAL] Trait `values` are documented as constraining but never enforced; trait value types don't flow to `setTrait`/`useTrait`**
+**3.5 [FIXED] Trait `values` are documented as constraining but never enforced; trait value types don't flow to `setTrait`/`useTrait`**
 `src/host/types.ts:21-27, 255`, `HostRulesEngine.ts:148-164`, `createHostHooks.tsx:99`
 
 The docs say a `values` list "both constrains and types the accepted values"; at runtime it is kept only for `__introspect`. An out-of-domain source value (wrong case query param, arbitrary user-supplied input) lands verbatim in `info().traits` and just fails every rule with no signal. On the type side, the domain typing applies only inside `TraitMatch`: `setTrait` accepts any `string | null` and `useTrait` returns `string | null`.

@@ -272,8 +272,12 @@ export interface HostRules<
    * arrives over the bridge). A set value beats the configured source and
    * persists across `refresh()`; `setTrait(name, null)` clears it so the next
    * `refresh()` falls back to the source. Re-resolves and notifies subscribers.
+   * The value is typed to the trait's declared `values` domain (if any).
    */
-  setTrait(name: TraitName<TTraits>, value: string | null): void;
+  setTrait<K extends TraitName<TTraits>>(
+    name: K,
+    value: TraitValue<TTraits[K]> | null,
+  ): void;
 
   /** Re-run resolution (re-invokes the version source unless a version was set). */
   refresh(): void;

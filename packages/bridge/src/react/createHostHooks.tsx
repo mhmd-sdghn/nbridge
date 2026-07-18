@@ -10,6 +10,7 @@ import type {
   PlatformSelect,
   TraitName,
   TraitsConfig,
+  TraitValue,
   VariantDef,
   VariantName,
   VariantValue,
@@ -64,7 +65,6 @@ export function createHostHooks<
   TVariants extends Record<string, VariantDef> = Record<string, VariantDef>,
 >(host: HostRules<TTraits, TCaps, TVariants>) {
   type Cap = CapabilityName<TCaps>;
-  type Trait = TraitName<TTraits>;
 
   /** The resolved host state, reactive to re-resolution. */
   function useHostInfo(): HostInfo {
@@ -96,12 +96,18 @@ export function createHostHooks<
     );
   }
 
-  /** The resolved value of a trait (or `null` when unknown), reactive. */
-  function useTrait(name: Trait): string | null {
+  /** The resolved value of a trait (or `null` when unknown), reactive. Typed to
+   * the trait's declared `values` domain (if any). */
+  function useTrait<K extends TraitName<TTraits>>(
+    name: K,
+  ): TraitValue<TTraits[K]> | null {
     return useSyncExternalStore(
       host.subscribe,
-      () => host.info().traits[name] ?? null,
-      () => host.__serverSnapshot().info.traits[name] ?? null,
+      () => (host.info().traits[name] ?? null) as TraitValue<TTraits[K]> | null,
+      () =>
+        (host.__serverSnapshot().info.traits[name] ?? null) as TraitValue<
+          TTraits[K]
+        > | null,
     );
   }
 
