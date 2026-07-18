@@ -808,7 +808,7 @@ Fix: warn/throw on repeat instantiation (module-level flag), and fix the underly
 
 Fixed: a module-level flag now warns on repeat factory calls, and the underlying destroy-clobber is fixed by 2.3's ownership guard.
 
-**6.2 `IBridgeManager` has drifted far from the class; the library's own hooks cannot be powered by a mock of it**
+**6.2 [FIXED] `IBridgeManager` has drifted far from the class; the library's own hooks cannot be powered by a mock of it**
 `src/types/index.ts:207-271` vs `src/core/BridgeManager.ts:318-866`, `createBridgeHooks.ts:360-401`
 
 The interface declares 10 members; the class has ~21 more public methods (use/addMiddleware/getMiddlewareCount, getMetrics/onMetricsUpdate, getQueueStats/flushQueue/clearQueue, getBatchStats/batch, compression stats, schema accessors, devtools accessors, the log facade). `useBridgeMetrics`/`useBridgeQueue` require methods missing from the interface, so the "manager interface" cannot describe the manager.
@@ -857,12 +857,14 @@ Fix: add a queue-update event; drive the hook via `useSyncExternalStore`; at min
 
 Fixed the re-render: `useBridgeQueue` now shallow-compares queue stats (`queueStatsEqual`) and keeps the previous state object when unchanged, so an idle queue no longer re-renders consumers every second. The deeper "queue-change event + useSyncExternalStore" rework (still polls, just no longer re-renders on no-change) was left as a follow-up.
 
-**6.7 `window.d.ts` global augmentation never ships; the actual native entry point is typed nowhere**
+**6.7 [PARTIAL] `window.d.ts` global augmentation never ships; the actual native entry point is typed nowhere**
 `src/types/window.d.ts:17-37`
 
 The `declare global` for `__BRIDGE_DEVTOOLS__` is dropped by the dts rollup (verified: dist has no `declare global`), so it neither pollutes consumers nor helps them, and `window.sendBridgeMessage`, the REAL wire entry point native code calls, is declared nowhere; even internal code casts through `Record<string, unknown>`.
 
 Fix: export named interfaces plus a documented augmentation consumers can opt into, and declare `sendBridgeMessage` properly.
+
+Fixed so far: `window.sendBridgeMessage` is now declared in `window.d.ts`, so internal code and the ambient global are correctly typed. Remaining: the `declare global` block is still dropped by tsdown's dts rollup, so it does not reach consumers' type space; shipping it needs a bundler-level change (emit an imported `.ts` global module) that is deferred.
 
 ### Low
 

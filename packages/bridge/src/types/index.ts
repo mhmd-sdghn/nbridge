@@ -273,6 +273,48 @@ export interface IBridgeManager {
    */
   waitForReady(timeout?: number): Promise<void>;
 
+  /** Register an outgoing/incoming middleware. */
+  use(middleware: Middleware): void;
+
+  /** @deprecated Alias for `use()`. */
+  addMiddleware(middleware: Middleware): void;
+
+  /** Number of registered middlewares. */
+  getMiddlewareCount(): number;
+
+  /** Current metrics snapshot, or null when metrics are disabled. */
+  getMetrics(): BridgeMetrics | null;
+
+  /** Subscribe to periodic metrics updates; returns an unsubscribe function. */
+  onMetricsUpdate(listener: MetricsListener): () => void;
+
+  /** Offline-queue stats, or null when the queue is disabled. */
+  getQueueStats(): QueueStats | null;
+
+  /** Flush the offline queue. */
+  flushQueue(): Promise<void>;
+
+  /** Clear the offline queue. */
+  clearQueue(): void;
+
+  /** Batch stats, or null when batching is disabled. */
+  getBatchStats(): BatchStats | null;
+
+  /** Flush any pending batched messages immediately. */
+  flushBatch(): Promise<void>;
+
+  /** Compression stats, or null when compression is disabled. */
+  getCompressionStats(): CompressionStats | null;
+
+  /** Whether outgoing compression is enabled. */
+  isCompressionEnabled(): boolean;
+
+  /** Log through the bridge's configured logger/destination. */
+  log(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+
   /**
    * Destroy the bridge and clean up resources
    */
