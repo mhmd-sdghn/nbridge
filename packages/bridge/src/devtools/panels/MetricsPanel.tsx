@@ -14,56 +14,30 @@ export function MetricsPanel() {
   });
 
   useEffect(() => {
-    if (!window.__BRIDGE_DEVTOOLS__) {
-      return;
-    }
+    if (typeof window === "undefined") return;
 
-    // Get bridge config to check which features are enabled
-    const config = window.__BRIDGE_DEVTOOLS__.getConfig();
+    // Poll unconditionally so the panel recovers if the bridge (and its
+    // devtools API) is not ready at mount, or a config/feature toggle happens
+    // later — instead of one-shot returning early and staying blank forever.
+    const tick = () => {
+      const api = window.__BRIDGE_DEVTOOLS__;
+      if (!api) return;
 
-    const enabledFeatures = {
-      metrics: config.metrics?.enabled ?? false,
-      queue: config.queue?.enabled ?? false,
-      batch: config.batching?.enabled ?? false,
+      const config = api.getConfig();
+      const enabledFeatures = {
+        metrics: config.metrics?.enabled ?? false,
+        queue: config.queue?.enabled ?? false,
+        batch: config.batching?.enabled ?? false,
+      };
+      setFeaturesEnabled(enabledFeatures);
+
+      if (enabledFeatures.metrics) setMetrics(api.getMetrics());
+      if (enabledFeatures.queue) setQueueStats(api.getQueueStats());
+      if (enabledFeatures.batch) setBatchStats(api.getBatchStats());
     };
 
-    setFeaturesEnabled(enabledFeatures);
-
-    // Only call functions for enabled features
-    if (enabledFeatures.metrics) {
-      setMetrics(window.__BRIDGE_DEVTOOLS__.getMetrics());
-    }
-    if (enabledFeatures.queue) {
-      setQueueStats(window.__BRIDGE_DEVTOOLS__.getQueueStats());
-    }
-    if (enabledFeatures.batch) {
-      setBatchStats(window.__BRIDGE_DEVTOOLS__.getBatchStats());
-    }
-
-    // Don't poll if no features are enabled
-    if (
-      !enabledFeatures.metrics &&
-      !enabledFeatures.queue &&
-      !enabledFeatures.batch
-    ) {
-      return;
-    }
-
-    // Only poll enabled features
-    const interval = setInterval(() => {
-      if (window.__BRIDGE_DEVTOOLS__) {
-        if (enabledFeatures.metrics) {
-          setMetrics(window.__BRIDGE_DEVTOOLS__.getMetrics());
-        }
-        if (enabledFeatures.queue) {
-          setQueueStats(window.__BRIDGE_DEVTOOLS__.getQueueStats());
-        }
-        if (enabledFeatures.batch) {
-          setBatchStats(window.__BRIDGE_DEVTOOLS__.getBatchStats());
-        }
-      }
-    }, 1000);
-
+    tick();
+    const interval = setInterval(tick, 1000);
     return () => clearInterval(interval);
   }, []);
 

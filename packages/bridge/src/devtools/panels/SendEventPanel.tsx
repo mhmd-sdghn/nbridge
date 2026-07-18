@@ -62,8 +62,12 @@ export function SendEventPanel({ bridge }: SendEventPanelProps) {
     if (trimmed === "") return undefined;
     try {
       return JSON.parse(trimmed);
-    } catch {
-      throw new Error("Invalid JSON payload");
+    } catch (e) {
+      // Keep the parser's position detail (e.g. "...at position 42") so a long
+      // payload is fixable, instead of a bare "Invalid JSON payload".
+      throw new Error(
+        `Invalid JSON payload: ${e instanceof Error ? e.message : String(e)}`,
+      );
     }
   }
 

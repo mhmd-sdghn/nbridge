@@ -464,6 +464,8 @@ export type LogSource = "bridge" | "console";
  * DevTools log entry
  */
 export interface DevToolsLog {
+  /** Monotonic id assigned at capture; stable across buffer eviction (list key). */
+  id: number;
   level: LogLevel;
   message: unknown[];
   timestamp: number;

@@ -57,7 +57,17 @@ export function LogsPanel() {
     const updateLogs = () => {
       if (typeof window !== "undefined" && window.__BRIDGE_DEVTOOLS__) {
         const allLogs = window.__BRIDGE_DEVTOOLS__.getLogs();
-        setLogs(allLogs);
+        // getLogs() returns a fresh array each tick; only re-render when the
+        // contents actually changed (id of the last entry + length) instead of
+        // every 500ms.
+        setLogs((prev) => {
+          const last = allLogs[allLogs.length - 1];
+          const prevLast = prev[prev.length - 1];
+          if (prev.length === allLogs.length && last?.id === prevLast?.id) {
+            return prev;
+          }
+          return allLogs;
+        });
         setIsLogsEnabled(true);
       } else {
         setIsLogsEnabled(false);
@@ -128,7 +138,11 @@ export function LogsPanel() {
     return matchesSource && matchesLevel && matchesSearch;
   });
 
-  if (!isLogsEnabled || (logs.length === 0 && !window.__BRIDGE_DEVTOOLS__)) {
+  if (
+    !isLogsEnabled ||
+    (logs.length === 0 &&
+      (typeof window === "undefined" || !window.__BRIDGE_DEVTOOLS__))
+  ) {
     return (
       <div className="flex items-center justify-center h-full">
         <div className="text-center space-y-3 max-w-md">
@@ -265,15 +279,14 @@ export function LogsPanel() {
             <p className="text-sm text-gray-400">No matching logs</p>
           </div>
         ) : (
-          filteredLogs.map((log, index) => {
+          filteredLogs.map((log) => {
             const config = LOG_LEVEL_CONFIG[log.level];
             const Icon = config.icon;
             const messageText = formatMessage(log.message);
 
             return (
               <div
-                // biome-ignore lint/suspicious/noArrayIndexKey: log entries have no id; list is append-only within a poll cycle
-                key={`${log.timestamp}-${index}`}
+                key={log.id}
                 className={`rounded-md border border-gray-700 ${config.bgColor} p-3 font-mono text-xs`}
               >
                 <div className="flex items-start gap-3">

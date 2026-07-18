@@ -21,6 +21,8 @@ type ConsoleMethod = "log" | "error" | "warn" | "info" | "debug";
 
 /** Marker set on wrapped console methods so multiple bridge instances never stack interceptors. */
 const INTERCEPTED = "__nbridge_devtools_intercepted__";
+/** Stashes the function a wrapper replaced, so restore rebuilds the exact chain. */
+const PREVIOUS = "__nbridge_devtools_previous__";
 
 export class BridgeDevTools {
   private messages: DevToolsMessage[] = [];
@@ -37,22 +39,18 @@ export class BridgeDevTools {
     payload?: unknown,
     options?: BridgeSendOptions,
   ) => Promise<BridgeResponse>;
-  private originalConsole: Record<ConsoleMethod, (...args: unknown[]) => void>;
+  /** Console methods THIS instance actually wrapped (for exact restore). */
+  private readonly wrappedMethods = new Set<ConsoleMethod>();
   /** The API object this instance installed on window.__BRIDGE_DEVTOOLS__ (ownership marker). */
   private windowAPI?: NonNullable<Window["__BRIDGE_DEVTOOLS__"]>;
+  /** Monotonic counter for stable log ids. */
+  private logIdCounter = 0;
 
   constructor(
     private logger: BridgeLogger,
     private config: Required<DevToolsConfig>,
   ) {
     this.enabled = config.enabled;
-    this.originalConsole = {
-      log: console.log.bind(console),
-      error: console.error.bind(console),
-      warn: console.warn.bind(console),
-      info: console.info.bind(console),
-      debug: console.debug.bind(console),
-    };
 
     if (this.enabled && typeof window !== "undefined") {
       if (isProductionEnvOrUnknown()) {
@@ -140,13 +138,24 @@ export class BridgeDevTools {
       }
 
       const wrapped = (...args: unknown[]) => {
-        this.originalConsole[method](...args);
+        // Call the ACTUAL prior function (stashed on the wrapper), not a bound
+        // copy captured at construction — that copy could itself be another
+        // instance's wrapper, causing double recording.
+        current(...args);
         if (this.enabled) {
           this.addLog(level, args, Date.now(), "console");
         }
       };
-      (wrapped as { [INTERCEPTED]?: boolean })[INTERCEPTED] = true;
+      const tagged = wrapped as ((...args: unknown[]) => void) & {
+        [INTERCEPTED]?: boolean;
+        [PREVIOUS]?: (...args: unknown[]) => void;
+      };
+      tagged[INTERCEPTED] = true;
+      tagged[PREVIOUS] = current;
       console[method] = wrapped;
+      // Record only the methods THIS instance actually wrapped, so restore is
+      // exact even when another instance already owned some methods.
+      this.wrappedMethods.add(method);
     };
 
     interceptMethod("log", "log");
@@ -154,16 +163,21 @@ export class BridgeDevTools {
     interceptMethod("warn", "warn");
     interceptMethod("info", "info");
     interceptMethod("debug", "log");
-    this.consoleIntercepted = true;
+    this.consoleIntercepted = this.wrappedMethods.size > 0;
   }
 
   private restoreConsole(): void {
-    if (!this.consoleIntercepted) return;
-    console.log = this.originalConsole.log;
-    console.error = this.originalConsole.error;
-    console.warn = this.originalConsole.warn;
-    console.info = this.originalConsole.info;
-    console.debug = this.originalConsole.debug;
+    for (const method of this.wrappedMethods) {
+      const currentFn = console[method] as ((...args: unknown[]) => void) & {
+        [PREVIOUS]?: (...args: unknown[]) => void;
+      };
+      // Only restore if our wrapper is still installed (another instance may
+      // have wrapped on top since); restore the function we replaced.
+      if (currentFn?.[PREVIOUS]) {
+        console[method] = currentFn[PREVIOUS];
+      }
+    }
+    this.wrappedMethods.clear();
     this.consoleIntercepted = false;
   }
 
@@ -250,6 +264,7 @@ export class BridgeDevTools {
     if (!this.enabled) return;
 
     const logEntry: DevToolsLog = {
+      id: ++this.logIdCounter,
       level,
       message,
       timestamp,
@@ -258,8 +273,9 @@ export class BridgeDevTools {
 
     this.logs.push(logEntry);
 
-    const maxConsoleLogEntries = this.config.maxConsoleLogEntries || 100;
-    if (this.logs.length > maxConsoleLogEntries) {
+    // `?? 100` (not `|| 100`) so an explicit 0 is honored, not coerced to 100.
+    const maxConsoleLogEntries = this.config.maxConsoleLogEntries ?? 100;
+    while (this.logs.length > maxConsoleLogEntries) {
       this.logs.shift();
     }
   }

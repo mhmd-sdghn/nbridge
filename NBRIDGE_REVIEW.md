@@ -739,7 +739,7 @@ Same whole-object-`??` defaulting as 1.2: any user-supplied `devTools` object sk
 
 Fix: per-field merge (pairs with 1.2), `?? 50` fallback inside BridgeDevTools, fix the in-UI snippet.
 
-**5.2 Console interception restore-ordering bugs: wrapper stacking, double-recording, zombie wrappers from destroyed instances**
+**5.2 [FIXED] Console interception restore-ordering bugs: wrapper stacking, double-recording, zombie wrappers from destroyed instances**
 `src/core/BridgeDevTools.ts:47-53, 124, 145, 148-156, 285-295`
 
 `originalConsole` is captured as BOUND copies of whatever is on `console` at construction; if instance A already intercepted, B's "originals" are copies of A's wrappers, and `bind()` strips the `INTERCEPTED` marker. `interceptConsole` sets `consoleIntercepted = true` even when every method was skipped via the marker check, so B's `restoreConsole()` reinstalls marker-less copies of A's wrappers: the next intercept wraps the copy and every console call is recorded twice. If A was destroyed, its wrapper is resurrected and keeps collecting into the dead instance (`destroy()` never sets `enabled = false`), pinning it in memory.
@@ -757,14 +757,14 @@ Fix: delete only when the stored object is the instance's own; route all panel r
 
 Fixed so far: `destroy()` now deletes the global only when it still owns it (ownership tracked via the installed API object), installation warns when overwriting another instance's API, and destroy also sets `enabled = false` (closing the zombie-collection half of 5.2). Remaining: the panels still read the global instead of `bridge.getDevTools()`, so the mixed-data-source issue stands.
 
-**5.4 Polling with fresh array identities: unconditional re-render + hundreds of JSON.stringify calls per second while idle**
+**5.4 [FIXED] Polling with fresh array identities: unconditional re-render + hundreds of JSON.stringify calls per second while idle**
 `src/core/BridgeDevTools.ts:224-226, 255-257`, `src/devtools/panels/LogsPanel.tsx:56-71, 124, 271`, `EventHistoryPanel.tsx:24-37`
 
 `getLogs()`/`getMessages()` return new arrays per call; the panels `setState` a fresh identity every 500ms even when nothing changed, and each LogsPanel render pretty-prints `JSON.stringify` for every entry twice (filter + row). With a full 100-entry buffer that is hundreds of stringifies/second at idle.
 
 Fix: skip setState when unchanged (length + last timestamp), memoize formatted text per entry, or better, replace polling with a subscription (`HostPanel.tsx:23-24` already demonstrates the correct subscribe pattern in the same package).
 
-**5.5 LogsPanel auto-scroll disables itself; MetricsPanel goes permanently blank on a mount race; unguarded `window` access crashes SSR**
+**5.5 [FIXED] LogsPanel auto-scroll disables itself; MetricsPanel goes permanently blank on a mount race; unguarded `window` access crashes SSR**
 `LogsPanel.tsx:74-98, 131`, `MetricsPanel.tsx:16-30`, `src/devtools/index.ts:19`
 
 (a) The scroll effect fires every poll tick (array identity, 5.4) and `handleScroll` treats the resulting smooth-scroll frames as user intent, silently turning follow-mode off after any log burst. (b) MetricsPanel's effect returns early if `window.__BRIDGE_DEVTOOLS__` is absent at mount, installs no interval, and never re-checks: permanently "Metrics Disabled"; `featuresEnabled` is also computed once. (c) `LogsPanel.tsx:131` evaluates `window.__BRIDGE_DEVTOOLS__` in the render body; LogsPanel is a standalone public export and a "use client" component still server-renders in Next.js: `ReferenceError: window is not defined`.
@@ -782,7 +782,7 @@ Fixed: added `isProductionEnvOrUnknown()` (returns true unless NODE_ENV is confi
 
 ### Low
 
-**5.7 DevTools UI polish items**
+**5.7 [FIXED] DevTools UI polish items**
 `DevToolsTrigger.tsx:107-135`, `DevToolsUI.tsx:35-39`, `BridgeDevTools.ts:214, 247-251`, `LogsPanel.tsx:276`, `SendEventPanel.tsx:60-68`
 
 - Dragging the trigger always toggles the panel on release (mouseup flushes before click; no moved-beyond-threshold suppression); the drag effect re-registers 4 window listeners per mousemove frame; `touchmove` is `{ passive: false }` but never calls preventDefault, so the page scrolls under a touch drag.

@@ -26,7 +26,20 @@ export function EventHistoryPanel() {
       if (typeof window !== "undefined" && window.__BRIDGE_DEVTOOLS__) {
         // Already bounded by the configured maxMessageHistory
         const allMessages = window.__BRIDGE_DEVTOOLS__.getMessages();
-        setMessages([...allMessages].reverse());
+        // getMessages() returns a fresh array each tick; only re-render on an
+        // actual change (length + last message id) rather than every 500ms.
+        setMessages((prev) => {
+          // prev is stored reversed, so prev[0] is the newest message.
+          const last = allMessages[allMessages.length - 1];
+          const prevNewest = prev[0];
+          if (
+            prev.length === allMessages.length &&
+            last?.__devtools.timestamp === prevNewest?.__devtools.timestamp
+          ) {
+            return prev;
+          }
+          return [...allMessages].reverse();
+        });
       }
     };
 
