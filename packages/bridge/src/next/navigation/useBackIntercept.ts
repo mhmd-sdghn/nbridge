@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef } from "react";
 import { BackInterceptManager } from "./BackInterceptManager";
 
 /**
@@ -14,8 +14,10 @@ import { BackInterceptManager } from "./BackInterceptManager";
  *   Changing this does NOT cause re-registration (preserves stack position).
  * @param pathName - Optional path to scope the intercept. When provided, only
  *   fires when the current URL pathname matches. Defaults to global ("*").
- * @param initiallyActive - Whether the intercept is enabled. Toggling this updates
- *   the entry in-place without changing its stack position. Defaults to true.
+ * @param isActive - Whether the intercept is enabled. Toggling this prop
+ *   updates the entry in-place (via manager.update) without changing its stack
+ *   position, so a declarative `useBackIntercept(cb, path, isModalOpen)` works.
+ *   Defaults to true.
  */
 export function useBackIntercept(
   onBackCallback: () => void,
@@ -30,9 +32,9 @@ export function useBackIntercept(
     callbackRef.current = onBackCallback;
   });
 
-  // Re-register when pathName changes. initiallyActive is applied on
-  // registration only (later toggles go through activate/deActivate) — the
-  // ref keeps the registration-time value without forcing a re-register.
+  // Re-register only when pathName changes (re-registering would reset stack
+  // position). The registration-time active value is read from a ref so a
+  // change to initiallyActive does not force a re-register.
   const initiallyActiveRef = useRef(initiallyActive);
   initiallyActiveRef.current = initiallyActive;
 
@@ -51,11 +53,26 @@ export function useBackIntercept(
     };
   }, [pathName]);
 
-  const activateIntercept = () =>
-    idRef.current && manager.update(idRef.current, { isActive: true });
+  // Honor the documented contract: toggling initiallyActive updates the entry
+  // in place (preserving its stack position) instead of being ignored.
+  useEffect(() => {
+    if (idRef.current) {
+      manager.update(idRef.current, { isActive: initiallyActive });
+    }
+  }, [initiallyActive, manager]);
 
-  const deActivateIntercept = () =>
-    idRef.current && manager.update(idRef.current, { isActive: false });
+  const activateIntercept = useCallback(() => {
+    if (idRef.current) manager.update(idRef.current, { isActive: true });
+  }, [manager]);
 
-  return { activateIntercept, deActivateIntercept };
+  const deactivateIntercept = useCallback(() => {
+    if (idRef.current) manager.update(idRef.current, { isActive: false });
+  }, [manager]);
+
+  return {
+    activateIntercept,
+    deactivateIntercept,
+    /** @deprecated Misspelled casing; use `deactivateIntercept`. */
+    deActivateIntercept: deactivateIntercept,
+  };
 }

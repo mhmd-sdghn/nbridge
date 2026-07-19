@@ -7,6 +7,12 @@ interface MessageTiming {
   endTime?: number;
 }
 
+/** Cap and TTL for pendingTimings so fire-and-forget sends cannot leak it. */
+const MAX_PENDING_TIMINGS = 1000;
+const PENDING_TIMING_TTL_MS = 60_000;
+/** Rolling window size for the response-time average. */
+const RESPONSE_TIME_WINDOW = 100;
+
 export class MetricsCollector {
   private metrics: BridgeMetrics = {
     messagesSent: 0,
@@ -22,6 +28,7 @@ export class MetricsCollector {
   };
 
   private responseTimes: number[] = [];
+  private responseTimesSum = 0;
   private pendingTimings = new Map<string, MessageTiming>();
   private listeners = new Set<MetricsListener>();
   private updateTimer?: ReturnType<typeof setInterval>;
@@ -49,8 +56,10 @@ export class MetricsCollector {
         id: messageId,
         startTime: Date.now(),
       });
+      this.evictStalePendingTimings();
     }
 
+    this.updateSuccessRate();
     this.updateMessagesPerSecond();
   }
 
@@ -89,22 +98,49 @@ export class MetricsCollector {
   }
 
   private recordResponseTime(time: number): void {
+    // Maintain a running sum over the last 100 samples so the rolling average
+    // is O(1) per sample instead of O(n) shift()+reduce().
     this.responseTimes.push(time);
+    this.responseTimesSum += time;
 
-    // Keep only last 100 response times for rolling average
-    if (this.responseTimes.length > 100) {
-      this.responseTimes.shift();
+    if (this.responseTimes.length > RESPONSE_TIME_WINDOW) {
+      const evicted = this.responseTimes.shift();
+      if (evicted !== undefined) this.responseTimesSum -= evicted;
     }
 
-    // Calculate average
-    const sum = this.responseTimes.reduce((a, b) => a + b, 0);
-    this.metrics.averageResponseTime = sum / this.responseTimes.length;
+    this.metrics.averageResponseTime =
+      this.responseTimesSum / this.responseTimes.length;
+  }
+
+  /**
+   * Bound pendingTimings. Fire-and-forget sends (no matching response) are
+   * never deleted by recordReceived, so without this the map grows unbounded
+   * for the lifetime of the page. Drop entries older than the TTL, then, if
+   * still over the cap, drop the oldest by insertion order.
+   */
+  private evictStalePendingTimings(): void {
+    const now = Date.now();
+    for (const [id, timing] of this.pendingTimings) {
+      if (now - timing.startTime > PENDING_TIMING_TTL_MS) {
+        this.pendingTimings.delete(id);
+      }
+    }
+    while (this.pendingTimings.size > MAX_PENDING_TIMINGS) {
+      const oldest = this.pendingTimings.keys().next().value;
+      if (oldest === undefined) break;
+      this.pendingTimings.delete(oldest);
+    }
   }
 
   private updateSuccessRate(): void {
-    const total = this.metrics.messagesSent;
+    // messagesSent counts only successful sends (recordSent runs after the
+    // adapter write succeeds) and messagesFailed counts failures, so the total
+    // number of attempts is their sum. Using messagesSent alone as the
+    // denominator made a run of pure failures read as 100% success.
+    const succeeded = this.metrics.messagesSent;
     const failed = this.metrics.messagesFailed;
-    this.metrics.successRate = total > 0 ? (total - failed) / total : 1;
+    const total = succeeded + failed;
+    this.metrics.successRate = total > 0 ? succeeded / total : 1;
   }
 
   private updateMessagesPerSecond(): void {
@@ -140,6 +176,10 @@ export class MetricsCollector {
 
   private startPeriodicUpdates(): void {
     this.updateTimer = setInterval(() => {
+      // Recompute the rate on the timer so it decays toward 0 when traffic
+      // stops (it was previously only recomputed on send, freezing at the last
+      // observed value forever).
+      this.updateMessagesPerSecond();
       const metrics = this.getMetrics();
       this.notifyListeners(metrics);
     }, this.config.updateInterval);
@@ -169,6 +209,7 @@ export class MetricsCollector {
       bytesReceived: 0,
     };
     this.responseTimes = [];
+    this.responseTimesSum = 0;
     this.pendingTimings.clear();
     this.startTime = Date.now();
     this.lastSecondCount = 0;

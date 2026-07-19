@@ -26,9 +26,16 @@ export interface VersionFromQueryOptions {
   /**
    * sessionStorage key used to persist the version across client-side
    * navigation that drops the query param.
-   * @default "nbridge:host-version"
+   * @default "nbridge:host-version" for the canonical "hv" param, otherwise
+   *   "nbridge:host-version:<param>" (param-scoped to avoid cross-app collisions)
    */
   storageKey?: string;
+  /**
+   * Persist the value to sessionStorage so it survives client-side navigation
+   * that drops the query param. Set `false` to read only the current URL.
+   * @default true
+   */
+  persist?: boolean;
 }
 
 /** Options for {@link traitFromQuery}. */
@@ -55,6 +62,19 @@ const VERSION_STORAGE_KEY = "nbridge:host-version";
  * contexts throw on `sessionStorage`), in which case persistence silently
  * degrades rather than crashing resolution. Shared by both built-in factories.
  */
+// Memoize the parse of location.search so N trait sources + the version source
+// in one resolution pass do not each rebuild URLSearchParams for the identical
+// query string (the engine invokes every source on every re-resolution).
+let cachedSearch: string | null = null;
+let cachedParams: URLSearchParams | null = null;
+function getQueryParams(search: string): URLSearchParams {
+  if (cachedSearch !== search || cachedParams === null) {
+    cachedSearch = search;
+    cachedParams = new URLSearchParams(search);
+  }
+  return cachedParams;
+}
+
 function queryParamSource(
   param: string,
   storageKey: string,
@@ -63,11 +83,17 @@ function queryParamSource(
   return () => {
     if (typeof window === "undefined") return null;
 
-    const fromParam = new URLSearchParams(window.location.search).get(param);
+    const raw = getQueryParams(window.location.search).get(param);
+    // Treat an empty value (`?hv=` or a bare `?hv`) as absent: it must not
+    // clobber a previously persisted good value with "".
+    const fromParam = raw !== null && raw.trim() !== "" ? raw : null;
     if (fromParam !== null) {
       if (persist) {
         try {
-          window.sessionStorage.setItem(storageKey, fromParam);
+          // Skip redundant writes (avoids needless cross-frame storage events).
+          if (window.sessionStorage.getItem(storageKey) !== fromParam) {
+            window.sessionStorage.setItem(storageKey, fromParam);
+          }
         } catch {
           // Storage unavailable (private mode, sandboxed iframe): degrade to
           // no persistence rather than crashing resolution.
@@ -96,10 +122,15 @@ export function versionFromQuery(
   param = "hv",
   options: VersionFromQueryOptions = {},
 ): HostVersionSource {
+  // Param-scoped default key so two engines on one origin using different
+  // params ("appAv", "appBv") do not collide in sessionStorage. The canonical
+  // "hv" param keeps the historical unscoped key for back-compat.
+  const defaultKey =
+    param === "hv" ? VERSION_STORAGE_KEY : `${VERSION_STORAGE_KEY}:${param}`;
   return queryParamSource(
     param,
-    options.storageKey ?? VERSION_STORAGE_KEY,
-    true,
+    options.storageKey ?? defaultKey,
+    options.persist ?? true,
   );
 }
 
@@ -123,9 +154,16 @@ export function traitFromQuery(
  * when the regex does not match.
  */
 export function versionFromUserAgent(regex: RegExp): HostVersionSource {
+  // Strip global/sticky flags at factory time: with `g`, String.match ignores
+  // capture groups (returns full matches), and `y` carries lastIndex state
+  // across calls, so either would make match[1] wrong or stateful.
+  const safeRegex =
+    regex.global || regex.sticky
+      ? new RegExp(regex.source, regex.flags.replace(/[gy]/g, ""))
+      : regex;
   return () => {
     if (typeof navigator === "undefined") return null;
-    const match = navigator.userAgent.match(regex);
+    const match = navigator.userAgent.match(safeRegex);
     return match?.[1] ?? null;
   };
 }

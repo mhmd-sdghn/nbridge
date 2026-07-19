@@ -1,6 +1,14 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
+import { RESPONSE_SUFFIX } from "../constants/protocol";
 import { createBridge } from "../core/BridgeManager";
 import type {
   BridgeConfig,
@@ -30,6 +38,21 @@ export interface BridgeReadyState {
   error: Error | null;
 }
 
+/** Guards against accidental repeat factory calls (see createBridgeHooks JSDoc). */
+let factoryCalled = false;
+
+/** Shallow value-equality for QueueStats so polling avoids no-op re-renders. */
+function queueStatsEqual(a: QueueStats | null, b: QueueStats | null): boolean {
+  if (a === b) return true;
+  if (!a || !b) return false;
+  return (
+    a.size === b.size &&
+    a.pending === b.pending &&
+    a.failed === b.failed &&
+    a.completed === b.completed
+  );
+}
+
 /**
  * Factory that creates a typed bridge instance and returns hooks bound to it.
  * No React Provider or context needed — hooks close over the bridge instance
@@ -49,52 +72,60 @@ export interface BridgeReadyState {
 export function createBridgeHooks<
   TSchemas extends SchemaRegistry | undefined = undefined,
 >(options: CreateBridgeHooksOptions<TSchemas> = {}) {
+  if (factoryCalled) {
+    console.warn(
+      "[nbridge] createBridgeHooks() called more than once. Each call creates an independent bridge instance, and native adapters share one window.sendBridgeMessage receive channel — the newest instance takes it over and earlier instances stop receiving. Call the factory once at module scope and share its hooks.",
+    );
+  }
+  factoryCalled = true;
+
   const bridge = createBridge<TSchemas>(options.config);
 
   // ── useBridgeSend ──────────────────────────────────────────────────────────
 
-  function useBridgeSend() {
-    async function send<
-      K extends TSchemas extends SchemaRegistry
-        ? MessageTypes<TSchemas>
-        : string,
-    >(
-      type: K,
-      payload?: TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? PayloadFor<TSchemas, K>
-          : never
-        : unknown,
-      opts?: BridgeSendOptions,
-    ): Promise<BridgeResponse> {
-      // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
-      return bridge.send(type as any, payload, opts);
-    }
+  // send/sendWithResponse close over only the module-scoped bridge, so they are
+  // defined once at factory scope. useBridgeSend returns this frozen object so
+  // its identity is stable across renders (safe in effect dependency arrays).
+  async function send<
+    K extends TSchemas extends SchemaRegistry ? MessageTypes<TSchemas> : string,
+  >(
+    type: K,
+    payload?: TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : never
+      : unknown,
+    opts?: BridgeSendOptions,
+  ): Promise<BridgeResponse> {
+    // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
+    return bridge.send(type as any, payload, opts);
+  }
 
-    async function sendWithResponse<
-      K extends TSchemas extends SchemaRegistry
-        ? MessageTypes<TSchemas>
-        : string,
-    >(
-      type: K,
-      payload?: TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? PayloadFor<TSchemas, K>
-          : never
-        : unknown,
-      timeout?: number,
-    ): Promise<
-      TSchemas extends SchemaRegistry
-        ? K extends MessageTypes<TSchemas>
-          ? ResponseFor<TSchemas, K>
-          : unknown
+  async function sendWithResponse<
+    K extends TSchemas extends SchemaRegistry ? MessageTypes<TSchemas> : string,
+  >(
+    type: K,
+    payload?: TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : never
+      : unknown,
+    timeout?: number,
+  ): Promise<
+    TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? ResponseFor<TSchemas, K>
         : unknown
-    > {
-      // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
-      return bridge.sendWithResponse(type as any, payload, timeout);
-    }
+      : unknown
+  > {
+    // biome-ignore lint/suspicious/noExplicitAny: Overloads handle type safety
+    return bridge.sendWithResponse(type as any, payload, timeout);
+  }
 
-    return { send, sendWithResponse };
+  const sendApi = Object.freeze({ send, sendWithResponse });
+
+  function useBridgeSend() {
+    return sendApi;
   }
 
   // ── useBridgeMessage ───────────────────────────────────────────────────────
@@ -162,13 +193,24 @@ export function createBridgeHooks<
         : never
       : unknown,
   ) {
-    // biome-ignore lint/suspicious/noExplicitAny: Type is inferred from schema
-    const [payload, setPayload] = useState<any>(initialValue);
-    const [message, setMessage] = useState<BridgeMessage | null>(null);
+    type StatePayload = TSchemas extends SchemaRegistry
+      ? K extends MessageTypes<TSchemas>
+        ? PayloadFor<TSchemas, K>
+        : unknown
+      : unknown;
+
+    // Carry the schema-derived payload type through to the returned value so
+    // consumers get real typing at the point of use, not `any`.
+    const [payload, setPayload] = useState<StatePayload | undefined>(
+      initialValue as StatePayload | undefined,
+    );
+    const [message, setMessage] = useState<BridgeMessage<StatePayload> | null>(
+      null,
+    );
 
     useBridgeMessage<K>(type, (newPayload, newMessage) => {
-      setPayload(newPayload);
-      setMessage(newMessage);
+      setPayload(newPayload as StatePayload);
+      setMessage(newMessage as BridgeMessage<StatePayload>);
     });
 
     return [payload, message] as const;
@@ -182,8 +224,12 @@ export function createBridgeHooks<
    * an unhandled rejection and a forever-false flag.
    */
   function useBridgeReadyState(timeout?: number): BridgeReadyState {
+    // Initialize to NOT ready so the first client render matches server output
+    // (during SSR bridge.isReady() is false because initialize() early-returns
+    // without a window). Reading bridge.isReady() here would make the first
+    // client render disagree with the server and trigger a hydration mismatch.
     const [state, setState] = useState<BridgeReadyState>({
-      ready: bridge.isReady(),
+      ready: false,
       error: null,
     });
 
@@ -239,35 +285,58 @@ export function createBridgeHooks<
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const [data, setData] = useState<ResponseType | null>(null);
+    // Monotonic call counter: only the latest request's settlement is allowed
+    // to update state, so a slow earlier call (e.g. one that times out after a
+    // retry succeeded) cannot overwrite newer data or clear loading early.
+    const seq = useRef(0);
+    const mounted = useRef(true);
+    useEffect(() => {
+      return () => {
+        mounted.current = false;
+      };
+    }, []);
 
-    async function request(
-      payload?: PayloadType,
-      timeout?: number,
-    ): Promise<ResponseType | null> {
-      setLoading(true);
-      setError(null);
-      try {
-        const result = await bridge.sendWithResponse(
-          type as string,
-          payload as unknown,
-          timeout,
-        );
-        setData(result as ResponseType);
-        return result as ResponseType;
-      } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        setError(e);
-        return null;
-      } finally {
-        setLoading(false);
-      }
-    }
+    // Stable identities (deps are all stable refs/setters) so consumers can
+    // safely put request/reset in effect dependency arrays.
+    const request = useCallback(
+      async (
+        payload?: PayloadType,
+        timeout?: number,
+      ): Promise<ResponseType | null> => {
+        const mySeq = ++seq.current;
+        const isCurrent = () => mounted.current && seq.current === mySeq;
+        setLoading(true);
+        setError(null);
+        try {
+          const result = await bridge.sendWithResponse(
+            type as string,
+            payload as unknown,
+            timeout,
+          );
+          if (isCurrent()) {
+            setData(result as ResponseType);
+            setLoading(false);
+          }
+          return result as ResponseType;
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          if (isCurrent()) {
+            setError(e);
+            setLoading(false);
+          }
+          return null;
+        }
+      },
+      [type],
+    );
 
-    function reset() {
+    const reset = useCallback(() => {
+      // Invalidate any in-flight request so its settlement is ignored.
+      seq.current++;
       setLoading(false);
       setError(null);
       setData(null);
-    }
+    }, []);
 
     return { request, loading, error, data, reset };
   }
@@ -291,10 +360,22 @@ export function createBridgeHooks<
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<Error | null>(null);
     const pendingIds = useRef(new Set<string>());
+    // Per-call expiry timers so a dropped host response cannot leave loading
+    // stuck true forever with a stale id poisoning later correlation (4.10).
+    const timers = useRef(new Map<string, ReturnType<typeof setTimeout>>());
 
-    const effectiveResponseType = responseType ?? `${requestType}_response`;
+    const effectiveResponseType =
+      responseType ?? `${requestType}${RESPONSE_SUFFIX}`;
 
     useEffect(() => {
+      const clearTimer = (id: string) => {
+        const t = timers.current.get(id);
+        if (t !== undefined) {
+          clearTimeout(t);
+          timers.current.delete(id);
+        }
+      };
+
       const subscription = bridge.on(
         effectiveResponseType,
         (payload: unknown, message: BridgeMessage) => {
@@ -302,10 +383,14 @@ export function createBridgeHooks<
 
           if (message.id && pendingIds.current.has(message.id)) {
             pendingIds.current.delete(message.id);
+            clearTimer(message.id);
           } else if (!message.id) {
             // Host doesn't echo ids — treat as answering the oldest call.
             const first = pendingIds.current.values().next().value;
-            if (first !== undefined) pendingIds.current.delete(first);
+            if (first !== undefined) {
+              pendingIds.current.delete(first);
+              clearTimer(first);
+            }
           } else {
             return; // correlated response for a different consumer
           }
@@ -318,41 +403,100 @@ export function createBridgeHooks<
       return () => subscription.unsubscribe();
     }, [effectiveResponseType]);
 
-    async function call(payload: TRequest): Promise<void> {
-      setLoading(true);
-      setError(null);
-      setResponse(null);
-      try {
-        const result = await bridge.send(requestType, payload);
-        if (result.id) {
-          pendingIds.current.add(result.id);
-        }
-      } catch (err) {
-        const e = err instanceof Error ? err : new Error(String(err));
-        setError(e);
-        setLoading(false);
-      }
-    }
+    // Clear all timers on unmount.
+    useEffect(() => {
+      const map = timers.current;
+      return () => {
+        for (const t of map.values()) clearTimeout(t);
+        map.clear();
+      };
+    }, []);
 
-    function reset() {
+    const call = useCallback(
+      async (payload: TRequest, timeout?: number): Promise<void> => {
+        setLoading(true);
+        setError(null);
+        setResponse(null);
+        try {
+          const result = await bridge.send(requestType, payload);
+          if (result.id) {
+            const id = result.id;
+            pendingIds.current.add(id);
+            if (timeout && timeout > 0) {
+              timers.current.set(
+                id,
+                setTimeout(() => {
+                  if (pendingIds.current.delete(id)) {
+                    timers.current.delete(id);
+                    setError(
+                      new Error(
+                        `RPC "${requestType}" timed out after ${timeout}ms`,
+                      ),
+                    );
+                    setLoading(pendingIds.current.size > 0);
+                  }
+                }, timeout),
+              );
+            }
+          }
+        } catch (err) {
+          const e = err instanceof Error ? err : new Error(String(err));
+          setError(e);
+          setLoading(false);
+        }
+      },
+      [requestType],
+    );
+
+    const reset = useCallback(() => {
       pendingIds.current.clear();
+      for (const t of timers.current.values()) clearTimeout(t);
+      timers.current.clear();
       setLoading(false);
       setError(null);
       setResponse(null);
-    }
+    }, []);
 
     return { call, response, loading, error, reset };
   }
 
   // ── usePlatform / useIsNative ──────────────────────────────────────────────
 
-  /** Non-reactive: platform cannot change after page load. */
+  // Platform can't change after page load, so subscribe is a no-op. Snapshots
+  // are cached to keep a stable object identity for useSyncExternalStore, and
+  // the server snapshot is a conservative "web"/non-native value so the first
+  // client render (which in a WebView would detect native) matches server HTML
+  // and never triggers a hydration mismatch.
+  const noopSubscribe = () => () => {};
+  let clientPlatformSnapshot: PlatformInfo | null = null;
+  const serverPlatformSnapshot: PlatformInfo = {
+    platform: "web",
+    isNative: false,
+    userAgent: "unknown",
+  };
+  const getClientPlatform = (): PlatformInfo => {
+    if (!clientPlatformSnapshot) {
+      clientPlatformSnapshot = bridge.getPlatform();
+    }
+    return clientPlatformSnapshot;
+  };
+  const getServerPlatform = (): PlatformInfo => serverPlatformSnapshot;
+
+  /**
+   * Platform info. Non-reactive (platform cannot change after page load), but
+   * SSR-safe: the server and first client render both see the "web" snapshot,
+   * then it settles to the real platform after hydration.
+   */
   function usePlatform(): PlatformInfo {
-    return bridge.getPlatform();
+    return useSyncExternalStore(
+      noopSubscribe,
+      getClientPlatform,
+      getServerPlatform,
+    );
   }
 
   function useIsNative(): boolean {
-    return bridge.getPlatform().isNative;
+    return usePlatform().isNative;
   }
 
   // ── useBridgeMetrics ───────────────────────────────────────────────────────
@@ -387,25 +531,37 @@ export function createBridgeHooks<
     useEffect(() => {
       if (!bridge.getQueueStats()) return;
 
+      // getQueueStats() returns a fresh object each tick, so setState-ing it
+      // unconditionally re-renders every consumer once per interval even when
+      // nothing changed. Only update on an actual value change.
       const interval = setInterval(() => {
         const newStats = bridge.getQueueStats();
-        if (newStats) setStats(newStats);
+        if (newStats) {
+          setStats((prev) =>
+            queueStatsEqual(prev, newStats) ? prev : newStats,
+          );
+        }
       }, pollInterval);
 
       return () => clearInterval(interval);
     }, [pollInterval]);
 
-    async function flush() {
+    const flush = useCallback(async () => {
       await bridge.flushQueue();
       const newStats = bridge.getQueueStats();
-      if (newStats) setStats(newStats);
-    }
+      if (newStats) {
+        setStats((prev) => (queueStatsEqual(prev, newStats) ? prev : newStats));
+      }
+    }, []);
 
-    return {
-      stats,
-      flush,
-      hasMessages: stats ? stats.size > 0 : false,
-    };
+    return useMemo(
+      () => ({
+        stats,
+        flush,
+        hasMessages: stats ? stats.size > 0 : false,
+      }),
+      [stats, flush],
+    );
   }
 
   return {

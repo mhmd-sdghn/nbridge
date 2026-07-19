@@ -46,6 +46,10 @@ export function createBridgeBackNavigation(
     const router = useRouter();
     const pathname = usePathname();
     const removeInterceptRef = useRef<(() => void) | null>(null);
+    // True between issuing router.back() and the resulting route change. Guards
+    // against a rapid second tap popping browser history twice before the first
+    // traversal's popstate lands.
+    const backInFlightRef = useRef(false);
     const navigationMode = navOptions?.mode ?? "session";
 
     // Guarantee back-intercept cleanup on unmount even if caller forgets
@@ -58,6 +62,8 @@ export function createBridgeBackNavigation(
 
     // biome-ignore lint/correctness/useExhaustiveDependencies: must re-sync session history on every route change
     useEffect(() => {
+      // A route change means any in-flight back() has landed.
+      backInFlightRef.current = false;
       const resolvedMode = resolveNavigationMode({ mode: navigationMode });
       if (resolvedMode === "session") {
         ensureSessionHistoryTracking();
@@ -100,6 +106,11 @@ export function createBridgeBackNavigation(
           force === BridgeBackAction.RouterBack;
 
         if (shouldUseRouter) {
+          // Ignore a second invocation while a router.back() is still settling;
+          // otherwise the session list is popped twice and the browser ends up
+          // multiple entries behind.
+          if (backInFlightRef.current) return;
+          backInFlightRef.current = true;
           if (resolvedMode === "session") {
             prepareSessionForRouterBack();
           }

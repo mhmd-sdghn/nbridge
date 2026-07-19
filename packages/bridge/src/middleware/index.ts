@@ -11,10 +11,14 @@ import type { BridgeMessage, Middleware } from "../types";
  */
 export function loggingMiddleware(prefix = "Bridge"): Middleware {
   return async (message, context, next) => {
-    console.log(
-      `[${prefix}] ${context.direction.toUpperCase()} - ${message.type}`,
-      message,
-    );
+    // Prefer the bridge's configured logger (respects debug/logDestination);
+    // fall back to console when no bridge is on the context.
+    const line = `[${prefix}] ${context.direction.toUpperCase()} - ${message.type}`;
+    if (context.bridge) {
+      context.bridge.log(line, message);
+    } else {
+      console.log(line, message);
+    }
     await next(message);
   };
 }
@@ -34,9 +38,12 @@ export function timingMiddleware(
     if (onTiming) {
       onTiming(message.type, duration, context.direction);
     } else {
-      console.log(
-        `[Timing] ${context.direction} ${message.type}: ${duration.toFixed(2)}ms`,
-      );
+      const line = `[Timing] ${context.direction} ${message.type}: ${duration.toFixed(2)}ms`;
+      if (context.bridge) {
+        context.bridge.log(line);
+      } else {
+        console.log(line);
+      }
     }
   };
 }
@@ -80,8 +87,35 @@ export function transformMiddleware(
 }
 
 /**
+ * Error thrown by `filterMiddleware` when it blocks a message. The bridge
+ * treats this specially: the send rejects with it (so `send()` does not
+ * falsely resolve `{ success: true }` and an `expectResponse` call does not
+ * hang until timeout), and it is NOT re-queued for retry (blocking is
+ * intentional, not a transient failure).
+ */
+export class FilteredMessageError extends Error {
+  /** Marker the send pipeline checks to skip offline-queue retry. */
+  readonly nbridgeFiltered = true;
+
+  constructor(messageType: string) {
+    super(`Message "${messageType}" was blocked by filterMiddleware`);
+    this.name = "FilteredMessageError";
+  }
+}
+
+/** True if an error is a `FilteredMessageError` (marker-based, cross-realm safe). */
+export function isFilteredMessageError(error: unknown): boolean {
+  return (
+    !!error &&
+    typeof error === "object" &&
+    (error as { nbridgeFiltered?: boolean }).nbridgeFiltered === true
+  );
+}
+
+/**
  * Filter middleware
- * Blocks messages that don't match the filter
+ * Blocks messages that don't match the filter. A blocked message rejects the
+ * send with {@link FilteredMessageError} instead of silently succeeding.
  */
 export function filterMiddleware(
   filter: (message: BridgeMessage, direction: string) => boolean,
@@ -89,20 +123,33 @@ export function filterMiddleware(
   return async (message, context, next) => {
     if (filter(message, context.direction)) {
       await next(message);
+      return;
     }
-    // Message blocked - don't call next
+    // Blocked. On the incoming direction there is no caller to reject, so just
+    // stop the chain; on outgoing, throw so the send rejects and is not queued.
+    if (context.direction === "outgoing") {
+      throw new FilteredMessageError(message.type);
+    }
   };
 }
 
 /**
- * Retry middleware
- * Retries failed messages (outgoing only)
+ * Retry middleware.
+ *
+ * On failure it calls `next()` again, which re-runs the rest of the chain from
+ * this position. Register it LAST (closest to the transport) so a retry re-runs
+ * only the transport, not the middlewares before it. Outgoing-only: retrying an
+ * inbound message would re-run downstream handlers and duplicate side effects.
  */
 export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
-  return async (message, _context, next) => {
-    let attempt = 0;
+  return async (message, context, next) => {
+    if (context.direction !== "outgoing") {
+      await next(message);
+      return;
+    }
 
-    while (attempt <= maxRetries) {
+    let attempt = 0;
+    for (;;) {
       try {
         await next(message);
         return; // Success
@@ -111,8 +158,6 @@ export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
         if (attempt > maxRetries) {
           throw error; // Max retries exceeded
         }
-
-        // Wait before retry
         await new Promise((resolve) => setTimeout(resolve, delayMs * attempt));
       }
     }
@@ -121,24 +166,26 @@ export function retryMiddleware(maxRetries = 3, delayMs = 1000): Middleware {
 
 /**
  * Throttle middleware
- * Limits the rate of messages
+ * Limits the rate of messages. Burst-safe: N concurrent messages are spaced
+ * `minInterval` apart rather than all measuring the same stale timestamp and
+ * releasing together.
  */
 export function throttleMiddleware(messagesPerSecond: number): Middleware {
-  let lastMessageTime = 0;
   const minInterval = 1000 / messagesPerSecond;
+  // The timestamp the NEXT message is allowed to go out. Reserving a slot
+  // synchronously (before the await) serializes concurrent callers.
+  let nextAllowedTime = 0;
 
   return async (message, _context, next) => {
     const now = Date.now();
-    const timeSinceLastMessage = now - lastMessageTime;
+    const scheduledTime = Math.max(now, nextAllowedTime);
+    nextAllowedTime = scheduledTime + minInterval;
 
-    if (timeSinceLastMessage < minInterval) {
-      // Wait before sending
-      await new Promise((resolve) =>
-        setTimeout(resolve, minInterval - timeSinceLastMessage),
-      );
+    const delay = scheduledTime - now;
+    if (delay > 0) {
+      await new Promise((resolve) => setTimeout(resolve, delay));
     }
 
-    lastMessageTime = Date.now();
     await next(message);
   };
 }
@@ -147,28 +194,34 @@ export function throttleMiddleware(messagesPerSecond: number): Middleware {
  * Encryption middleware
  * Encrypts outgoing messages, decrypts incoming messages
  */
+const ENCRYPTED_MARKER = "__nbridgeEncrypted";
+
 export function encryptionMiddleware(
   encrypt: (data: unknown) => Promise<string> | string,
   decrypt: (encrypted: string) => Promise<unknown> | unknown,
 ): Middleware {
   return async (message, context, next) => {
     if (context.direction === "outgoing") {
-      // Encrypt payload
       const encrypted = await encrypt(message.payload);
       await next({
         ...message,
-        payload: { encrypted },
+        // Tagged envelope so the incoming side only decrypts envelopes this
+        // middleware produced, never an arbitrary user payload that happens to
+        // have an `encrypted` field.
+        payload: { [ENCRYPTED_MARKER]: true, encrypted },
       });
     } else {
-      // Decrypt payload
+      const payload = message.payload as
+        | { [ENCRYPTED_MARKER]?: unknown; encrypted?: string }
+        | null
+        | undefined;
       if (
-        message.payload &&
-        typeof message.payload === "object" &&
-        "encrypted" in message.payload
+        payload &&
+        typeof payload === "object" &&
+        payload[ENCRYPTED_MARKER] === true &&
+        typeof payload.encrypted === "string"
       ) {
-        const decrypted = await decrypt(
-          (message.payload as { encrypted: string }).encrypted,
-        );
+        const decrypted = await decrypt(payload.encrypted);
         await next({
           ...message,
           payload: decrypted,

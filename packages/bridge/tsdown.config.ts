@@ -15,8 +15,7 @@ export default defineConfig({
   },
   clean: true,
   // Rebuild the precompiled devtools stylesheet after every (re)build so
-  // watch mode keeps dist/devtools/styles.css in place — `clean: true`
-  // wipes it at watch startup otherwise.
-  onSuccess:
-    "tailwindcss -i ./src/devtools/styles.source.css -o ./dist/devtools/styles.css --minify",
+  // watch mode keeps dist/devtools/styles.css in place (`clean: true` wipes it
+  // at watch startup otherwise). Single source of truth: the `build:css` script.
+  onSuccess: "pnpm run build:css",
 });

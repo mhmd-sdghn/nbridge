@@ -20,6 +20,13 @@ export interface BridgeMessage<T = unknown> {
   id?: string;
   timestamp?: number;
   /**
+   * Protocol discriminator stamped by `createMessage`. postMessage-based
+   * transports (iframe/web) require it so unrelated `{ type: ... }` traffic
+   * on the same window is never dispatched into bridge handlers. Native
+   * WebView transports accept messages without it for host compatibility.
+   */
+  __nbridge?: 1;
+  /**
    * Protocol flag: payload is a compressed base64 string produced by the
    * sending side's CompressionManager. Set automatically — do not set by hand.
    */
@@ -67,10 +74,12 @@ export interface BridgeSendOptions {
   expectResponse?: boolean;
   /**
    * Queue priority used when the message cannot be delivered immediately
-   * (offline or adapter failure) and the offline queue is enabled.
+   * (offline or adapter failure) and the offline queue is enabled. Accepts
+   * either the uppercase names ("HIGH") or the exported `MessagePriority`
+   * constant values ("high") — both are normalized internally.
    * @default "NORMAL"
    */
-  priority?: "HIGH" | "NORMAL" | "LOW";
+  priority?: "HIGH" | "NORMAL" | "LOW" | "high" | "normal" | "low";
 }
 
 /**
@@ -186,8 +195,8 @@ export interface MiddlewareContext {
   direction: "outgoing" | "incoming";
   /** Timestamp when middleware execution started */
   timestamp: number;
-  /** Bridge instance reference */
-  bridge?: unknown;
+  /** The bridge instance running the middleware chain. */
+  bridge?: IBridgeManager;
 }
 
 /**
@@ -264,6 +273,48 @@ export interface IBridgeManager {
    */
   waitForReady(timeout?: number): Promise<void>;
 
+  /** Register an outgoing/incoming middleware. */
+  use(middleware: Middleware): void;
+
+  /** @deprecated Alias for `use()`. */
+  addMiddleware(middleware: Middleware): void;
+
+  /** Number of registered middlewares. */
+  getMiddlewareCount(): number;
+
+  /** Current metrics snapshot, or null when metrics are disabled. */
+  getMetrics(): BridgeMetrics | null;
+
+  /** Subscribe to periodic metrics updates; returns an unsubscribe function. */
+  onMetricsUpdate(listener: MetricsListener): () => void;
+
+  /** Offline-queue stats, or null when the queue is disabled. */
+  getQueueStats(): QueueStats | null;
+
+  /** Flush the offline queue. */
+  flushQueue(): Promise<void>;
+
+  /** Clear the offline queue. */
+  clearQueue(): void;
+
+  /** Batch stats, or null when batching is disabled. */
+  getBatchStats(): BatchStats | null;
+
+  /** Flush any pending batched messages immediately. */
+  flushBatch(): Promise<void>;
+
+  /** Compression stats, or null when compression is disabled. */
+  getCompressionStats(): CompressionStats | null;
+
+  /** Whether outgoing compression is enabled. */
+  isCompressionEnabled(): boolean;
+
+  /** Log through the bridge's configured logger/destination. */
+  log(...args: unknown[]): void;
+  warn(...args: unknown[]): void;
+  error(...args: unknown[]): void;
+  info(...args: unknown[]): void;
+
   /**
    * Destroy the bridge and clean up resources
    */
@@ -275,19 +326,31 @@ export interface IBridgeManager {
  */
 export interface MiddlewareConfig {
   /** Enable middleware system (default: true) */
-  enabled: boolean;
+  enabled?: boolean;
 }
 
 /**
- * Queue configuration
+ * Queue configuration. Only `enabled` is required; all other fields fall back
+ * to the documented defaults.
  */
 export interface QueueConfig {
   enabled: boolean;
-  maxSize: number;
-  persist: boolean;
-  storageKey: string;
-  autoFlush: boolean;
-  flushInterval: number;
+  /** @default 100 */
+  maxSize?: number;
+  /** @default false */
+  persist?: boolean;
+  /** @default "nbridge-queue" */
+  storageKey?: string;
+  /** @default true */
+  autoFlush?: boolean;
+  /** @default 5000 */
+  flushInterval?: number;
+  /**
+   * How many delivery attempts a queued message gets before it is dropped
+   * (attempts made while offline do not count).
+   * @default 3
+   */
+  maxRetries?: number;
 }
 
 /**
@@ -305,10 +368,12 @@ export interface QueueStats {
  */
 export interface QueuedMessage {
   message: BridgeMessage;
-  retries: number;
+  /** @deprecated Always 0 and never read; `attempts` is the real delivery counter. */
+  retries?: number;
   priority: MessagePriority;
   options?: BridgeSendOptions;
   timestamp?: number;
+  /** Delivery attempts made during flush; compared against `queue.maxRetries`. */
   attempts?: number;
 }
 
@@ -336,12 +401,14 @@ export interface HandshakeConfig {
 }
 
 /**
- * Batch configuration
+ * Batch configuration. Only `enabled` is required.
  */
 export interface BatchConfig {
   enabled: boolean;
-  maxSize: number;
-  maxWait: number;
+  /** @default 10 */
+  maxSize?: number;
+  /** @default 100 */
+  maxWait?: number;
 }
 
 /**
@@ -366,12 +433,14 @@ export interface BatchedMessage {
 }
 
 /**
- * Metrics configuration
+ * Metrics configuration. Only `enabled` is required.
  */
 export interface MetricsConfig {
   enabled: boolean;
-  updateInterval: number;
-  detailedTiming: boolean;
+  /** @default 1000 */
+  updateInterval?: number;
+  /** @default false */
+  detailedTiming?: boolean;
 }
 
 /**
@@ -396,12 +465,15 @@ export interface BridgeMetrics {
 export type MetricsListener = (metrics: BridgeMetrics) => void;
 
 /**
- * Compression configuration
+ * Compression configuration. Only `enabled` is required.
+ *
+ * Wire format: zlib-wrapped deflate, base64-encoded (pako.deflate/inflate).
  */
 export interface CompressionConfig {
   enabled: boolean;
-  algorithm: "gzip" | "deflate" | "br";
-  threshold: number;
+  /** @default 1024 */
+  threshold?: number;
+  /** @default true */
   trackStats?: boolean;
 }
 
@@ -434,6 +506,8 @@ export type LogSource = "bridge" | "console";
  * DevTools log entry
  */
 export interface DevToolsLog {
+  /** Monotonic id assigned at capture; stable across buffer eviction (list key). */
+  id: number;
   level: LogLevel;
   message: unknown[];
   timestamp: number;
@@ -441,7 +515,7 @@ export interface DevToolsLog {
 }
 
 /**
- * DevTools configuration
+ * DevTools configuration. Only `enabled` is required.
  */
 export interface DevToolsConfig {
   enabled: boolean;
@@ -449,7 +523,7 @@ export interface DevToolsConfig {
    * Maximum number of bridge messages to keep in history
    * @default 50
    */
-  maxMessageHistory: number;
+  maxMessageHistory?: number;
   /**
    * Where to output logs
    * - "console": Only browser console

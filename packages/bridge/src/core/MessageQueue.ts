@@ -15,12 +15,17 @@ const LEGACY_PRIORITY_KEYS: Record<string, MessagePriority> = {
   "2": MessagePriority.LOW,
 };
 
+// Highest-priority-first order. Single source of truth for every queue scan.
+const PRIORITY_ORDER: readonly MessagePriority[] = [
+  MessagePriority.HIGH,
+  MessagePriority.NORMAL,
+  MessagePriority.LOW,
+];
+
 export class MessageQueue {
-  private queue: Map<MessagePriority, QueuedMessage[]> = new Map([
-    [MessagePriority.HIGH, []],
-    [MessagePriority.NORMAL, []],
-    [MessagePriority.LOW, []],
-  ]);
+  private queue: Map<MessagePriority, QueuedMessage[]> = new Map(
+    PRIORITY_ORDER.map((p) => [p, [] as QueuedMessage[]]),
+  );
   private flushing = false;
   private flushCallback?: () => Promise<void>;
   private stats: QueueStats = {
@@ -30,6 +35,8 @@ export class MessageQueue {
     completed: 0,
   };
   private flushTimer?: ReturnType<typeof setInterval>;
+  private persistTimer?: ReturnType<typeof setTimeout>;
+  private pageHideListener: (() => void) | null = null;
 
   constructor(
     private logger: BridgeLogger,
@@ -37,6 +44,32 @@ export class MessageQueue {
   ) {
     this.loadFromStorage();
     this.setupAutoFlush();
+
+    // Flush any pending debounced write when the page is being hidden/unloaded,
+    // so a debounced enqueue is not lost on navigation away.
+    if (this.config.persist && typeof window !== "undefined") {
+      this.pageHideListener = () => this.flushPersist();
+      window.addEventListener("pagehide", this.pageHideListener);
+      window.addEventListener("visibilitychange", this.pageHideListener);
+    }
+  }
+
+  /** Schedule a trailing persist write, coalescing bursts of enqueues. */
+  private persistDebounced(): void {
+    if (this.persistTimer !== undefined) return;
+    this.persistTimer = setTimeout(() => {
+      this.persistTimer = undefined;
+      this.saveToStorage();
+    }, 150);
+  }
+
+  /** Write immediately, cancelling any pending debounced write. */
+  private flushPersist(): void {
+    if (this.persistTimer !== undefined) {
+      clearTimeout(this.persistTimer);
+      this.persistTimer = undefined;
+    }
+    if (this.config.persist) this.saveToStorage();
   }
 
   public enqueue(
@@ -77,8 +110,10 @@ export class MessageQueue {
       `Queued message: ${message.type} with priority ${priority} (queue size: ${this.stats.size})`,
     );
 
+    // Debounce persistence: without this, filling the queue while offline
+    // rewrites the entire localStorage blob on every enqueue (O(N^2) aggregate).
     if (this.config.persist) {
-      this.saveToStorage();
+      this.persistDebounced();
     }
 
     return true;
@@ -90,40 +125,6 @@ export class MessageQueue {
       total += priorityQueue.length;
     }
     return total;
-  }
-
-  public dequeue(): QueuedMessage | null {
-    // Dequeue from highest priority first
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
-      const priorityQueue = this.queue.get(priority);
-      if (priorityQueue && priorityQueue.length > 0) {
-        const message = priorityQueue.shift();
-        if (message) {
-          this.stats.size = this.getTotalSize();
-          return message;
-        }
-      }
-    }
-    return null;
-  }
-
-  public peek(): QueuedMessage | null {
-    // Peek from highest priority first
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
-      const priorityQueue = this.queue.get(priority);
-      if (priorityQueue && priorityQueue.length > 0) {
-        return priorityQueue[0] ?? null;
-      }
-    }
-    return null;
   }
 
   public async flush(
@@ -148,11 +149,7 @@ export class MessageQueue {
 
     // Collect all messages from all priorities
     const messagesToFlush: QueuedMessage[] = [];
-    for (const priority of [
-      MessagePriority.HIGH,
-      MessagePriority.NORMAL,
-      MessagePriority.LOW,
-    ]) {
+    for (const priority of PRIORITY_ORDER) {
       const priorityQueue = this.queue.get(priority);
       if (priorityQueue) {
         messagesToFlush.push(...priorityQueue);
@@ -174,7 +171,7 @@ export class MessageQueue {
 
         // Re-queue if attempts left
         queuedMessage.attempts = (queuedMessage.attempts || 0) + 1;
-        if (queuedMessage.attempts < 3) {
+        if (queuedMessage.attempts < this.config.maxRetries) {
           const priorityQueue = this.queue.get(queuedMessage.priority);
           if (priorityQueue) {
             priorityQueue.push(queuedMessage);
@@ -232,6 +229,10 @@ export class MessageQueue {
 
   public setFlushCallback(fn: () => Promise<void>): void {
     this.flushCallback = fn;
+    // Now that the callback is set, start the auto-flush timer.
+    // setupAutoFlush was already called in the constructor, but at that point
+    // flushCallback was undefined, so the timer was a no-op.
+    this.setupAutoFlush();
   }
 
   private loadFromStorage(): void {
@@ -244,6 +245,13 @@ export class MessageQueue {
       if (stored) {
         const data = JSON.parse(stored);
 
+        // Drop entries whose shape is invalid (corrupt/legacy storage) so a
+        // single bad record cannot crash resolution or wedge the flush loop.
+        const isValidEntry = (m: unknown): m is QueuedMessage =>
+          !!m &&
+          typeof m === "object" &&
+          typeof (m as QueuedMessage).message?.type === "string";
+
         // Load messages into priority queues
         if (data.queueData) {
           // New format with priority queues
@@ -253,20 +261,32 @@ export class MessageQueue {
             const priority = (LEGACY_PRIORITY_KEYS[key] ??
               key) as MessagePriority;
             const priorityQueue = this.queue.get(priority);
-            if (priorityQueue) {
-              priorityQueue.push(...messages.map((m) => ({ ...m, priority })));
+            if (priorityQueue && Array.isArray(messages)) {
+              priorityQueue.push(
+                ...messages
+                  .filter(isValidEntry)
+                  .map((m) => ({ ...m, priority })),
+              );
             }
           }
-        } else if (data.queue) {
+        } else if (data.queue && Array.isArray(data.queue)) {
           // Old format (single array) - migrate to NORMAL priority
           const normalQueue = this.queue.get(MessagePriority.NORMAL);
           if (normalQueue) {
-            normalQueue.push(...data.queue);
+            normalQueue.push(...data.queue.filter(isValidEntry));
           }
         }
 
-        this.stats = data.stats || this.stats;
-        this.logger.info(`Loaded ${this.getTotalSize()} messages from storage`);
+        // Recompute stats from what actually loaded rather than trusting the
+        // persisted counters (which can drift or be corrupt).
+        const size = this.getTotalSize();
+        this.stats = {
+          size,
+          pending: size,
+          failed: 0,
+          completed: 0,
+        };
+        this.logger.info(`Loaded ${size} messages from storage`);
       }
     } catch (error) {
       this.logger.error("Failed to load queue from storage:", error);
@@ -319,7 +339,12 @@ export class MessageQueue {
 
     // Setup new timer
     this.flushTimer = setInterval(() => {
-      if (!this.isEmpty() && !this.flushing && this.flushCallback) {
+      if (
+        !this.isEmpty() &&
+        !this.flushing &&
+        this.flushCallback &&
+        (typeof navigator === "undefined" || navigator.onLine !== false)
+      ) {
         this.logger.log("Auto-flush triggered");
         this.flushCallback().catch((error) => {
           this.logger.error("Auto-flush failed:", error);
@@ -333,9 +358,14 @@ export class MessageQueue {
       clearInterval(this.flushTimer);
     }
 
-    if (this.config.persist) {
-      this.saveToStorage();
+    if (this.pageHideListener && typeof window !== "undefined") {
+      window.removeEventListener("pagehide", this.pageHideListener);
+      window.removeEventListener("visibilitychange", this.pageHideListener);
+      this.pageHideListener = null;
     }
+
+    // Flush any pending debounced write (also cancels the timer).
+    this.flushPersist();
 
     // Clear all priority queues
     for (const priorityQueue of this.queue.values()) {

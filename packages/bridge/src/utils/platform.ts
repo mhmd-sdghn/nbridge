@@ -1,13 +1,31 @@
 import type { BridgePlatform, PlatformInfo } from "../types";
 
+/**
+ * OS heuristic (NOT bridge availability). Matches any Android browser, WebView
+ * or not. For "am I in the native app?" decisions use `hasAndroidBridge()` /
+ * `getPlatformInfo()` instead.
+ */
 export function isAndroid(): boolean {
   if (typeof window === "undefined") return false;
   return /Android/i.test(navigator.userAgent);
 }
 
+/**
+ * OS heuristic (NOT bridge availability). Also detects iPadOS 13+, which
+ * defaults to a desktop Macintosh UA and would otherwise be missed. For
+ * "am I in the native app?" decisions use `hasIOSBridge()` /
+ * `getPlatformInfo()` instead.
+ */
 export function isIOS(): boolean {
   if (typeof window === "undefined") return false;
-  return /iPhone|iPad|iPod/i.test(navigator.userAgent);
+  const ua = navigator.userAgent;
+  if (/iPhone|iPad|iPod/i.test(ua)) return true;
+  // iPadOS 13+ reports as "Macintosh" but is a touch device.
+  return (
+    navigator.platform === "MacIntel" &&
+    typeof navigator.maxTouchPoints === "number" &&
+    navigator.maxTouchPoints > 1
+  );
 }
 
 export function isIframe(): boolean {
@@ -22,11 +40,13 @@ export function isIframe(): boolean {
 
 export function hasAndroidBridge(interfaceName = "AndroidBridge"): boolean {
   if (typeof window === "undefined") return false;
-  return (
-    interfaceName in window &&
-    typeof (window as unknown as Record<string, unknown>)[interfaceName] ===
-      "object"
-  );
+  const candidate = (window as unknown as Record<string, unknown>)[
+    interfaceName
+  ] as { postMessage?: unknown } | undefined;
+  // Require a callable postMessage: a bare object (or a DOM element exposed via
+  // window[id] named-property access, e.g. <div id="AndroidBridge">) is not a
+  // real WebView bridge and must not hijack platform detection.
+  return typeof candidate?.postMessage === "function";
 }
 
 export function hasIOSBridge(handlerName = "iosBridge"): boolean {

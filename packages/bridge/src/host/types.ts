@@ -67,12 +67,20 @@ export interface CapabilityWhen<TTraits = TraitsConfig> {
  * An absent platform key (or an explicit `undefined`) means the capability is
  * `false` on that platform — a missing value is fail-safe, never enabling.
  *
+ * Use the `all` key as a fallback for every platform not explicitly listed, so
+ * a trait-only or cross-platform capability need not enumerate all four
+ * platforms (an explicit platform key still overrides `all`).
+ *
  * An optional `when` gate adds trait conditions ANDed on top of the per-platform
  * result. It never enables a platform you did not list.
  */
 export type CapabilityRule<TTraits = TraitsConfig> = Partial<
   Record<BridgePlatform, boolean | VersionConstraint>
-> & { when?: CapabilityWhen<TTraits> };
+> & {
+  /** Fallback for any platform not explicitly listed above. */
+  all?: boolean | VersionConstraint;
+  when?: CapabilityWhen<TTraits>;
+};
 
 /**
  * The match clause of a variant rule. `platform`, `version`, and `traits` are
@@ -112,6 +120,22 @@ export interface HostPlatformConfig {
   androidInterface?: string;
   /** @default "iosBridge" */
   iosHandler?: string;
+  /**
+   * Optional platform source. When provided, the engine uses it INSTEAD of its
+   * own `detectPlatform()` call, so an app that already has a bridge cannot let
+   * the two subsystems disagree about the platform:
+   *
+   * ```ts
+   * const bridge = createBridge(...);
+   * defineHostRules({ platform: { detect: () => bridge.getPlatform().platform } });
+   * ```
+   *
+   * A `BridgeManager`-like object (anything with `getPlatform()`) is also
+   * accepted directly.
+   */
+  detect?:
+    | (() => BridgePlatform)
+    | { getPlatform: () => { platform: BridgePlatform } };
 }
 
 /**
@@ -214,14 +238,27 @@ export type VariantValue<V> = V extends {
  * async hosts push a late version via `setVersion`.
  */
 export interface HostRules<
+  // Parameter order matches HostRulesConfig / defineHostRules (declaration
+  // order: traits, capabilities, variants) so the same three type params never
+  // need to be reordered between config and instance annotations.
+  TTraits extends TraitsConfig = TraitsConfig,
   TCaps extends Record<string, CapabilityRule> = Record<string, CapabilityRule>,
   TVariants extends Record<string, VariantDef> = Record<string, VariantDef>,
-  TTraits extends TraitsConfig = TraitsConfig,
 > {
-  /** Whether a capability is enabled on the resolved host. */
+  /**
+   * Whether a capability is enabled on the resolved host. Fail-safe: an unknown
+   * name returns `false` (never throws), consistent with the "absent platform
+   * key means false" rule, so a capability gate can never crash a render. This
+   * is intentionally different from `variant()`, which throws on an unknown
+   * name because a variant has no safe default value to return.
+   */
   supports(name: CapabilityName<TCaps>): boolean;
 
-  /** The resolved value of a variant (typed union of its rule values + default). */
+  /**
+   * The resolved value of a variant (typed union of its rule values + default).
+   * Throws `[nbridge] Unknown variant "..."` for a name not in the config
+   * (unlike `supports`, there is no safe fallback value).
+   */
   variant<K extends VariantName<TVariants>>(
     name: K,
   ): VariantValue<TVariants[K]>;
@@ -251,15 +288,26 @@ export interface HostRules<
    * arrives over the bridge). A set value beats the configured source and
    * persists across `refresh()`; `setTrait(name, null)` clears it so the next
    * `refresh()` falls back to the source. Re-resolves and notifies subscribers.
+   * The value is typed to the trait's declared `values` domain (if any).
    */
-  setTrait(name: TraitName<TTraits>, value: string | null): void;
+  setTrait<K extends TraitName<TTraits>>(
+    name: K,
+    value: TraitValue<TTraits[K]> | null,
+  ): void;
 
   /** Re-run resolution (re-invokes the version source unless a version was set). */
   refresh(): void;
 
   /**
-   * DEV-ONLY escape hatch for devtools/tests: force a platform, version, and/or
-   * traits. Not for production; the only supported override mechanism.
+   * Force a platform, version, and/or traits. The supported mechanism for
+   * tests and devtools to drive the engine. Pass `null` to clear the override.
+   * Field semantics: an omitted or `undefined` field leaves the source/explicit
+   * value in effect; `null` forces that field to unknown.
+   */
+  setOverride(override: HostOverride | null): void;
+
+  /**
+   * @deprecated Use `setOverride`. Kept as an alias for compatibility.
    */
   __setOverride(override: HostOverride | null): void;
 

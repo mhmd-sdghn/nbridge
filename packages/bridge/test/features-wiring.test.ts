@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createBridge, PROTOCOL } from "../src";
+import { createBridge, MessagePriority, PROTOCOL } from "../src";
 import type { BridgeManager } from "../src/core/BridgeManager";
 import type { BridgeMessage } from "../src/types";
 import {
@@ -29,7 +29,7 @@ describe("compression wiring", () => {
     const native = installAndroidBridge();
     const bridge = track(
       createBridge({
-        compression: { enabled: true, algorithm: "deflate", threshold: 100 },
+        compression: { enabled: true, threshold: 100 },
       }),
       native.uninstall,
     );
@@ -49,7 +49,7 @@ describe("compression wiring", () => {
     const native = installAndroidBridge();
     const bridge = track(
       createBridge({
-        compression: { enabled: true, algorithm: "deflate", threshold: 1024 },
+        compression: { enabled: true, threshold: 1024 },
       }),
       native.uninstall,
     );
@@ -59,11 +59,59 @@ describe("compression wiring", () => {
     expect(native.sent[0]?.payload).toEqual({ a: 1 });
   });
 
+  it("compresses a payload at/above the threshold boundary (8.12)", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({ compression: { enabled: true, threshold: 50 } }),
+      native.uninstall,
+    );
+
+    // Well below threshold: uncompressed.
+    await bridge.send("tiny", { a: 1 });
+    expect(native.sent[0]?.__compressed).toBeUndefined();
+
+    // Comfortably above threshold and compressible: compressed.
+    await bridge.send("big", { text: "a".repeat(500) });
+    expect(native.sent[1]?.__compressed).toBe(true);
+  });
+
+  it("round-trips a compressed batch envelope (compression + batching, 8.12)", async () => {
+    // Sender: compression + batching both on. The batch envelope is large and
+    // compressible, so it goes on the wire compressed.
+    const nativeSender = installAndroidBridge();
+    const sender = createBridge({
+      compression: { enabled: true, threshold: 50 },
+      batching: { enabled: true, maxSize: 2, maxWait: 5000 },
+    });
+    await sender.send("a", { text: "x".repeat(300) });
+    await sender.send("b", { text: "y".repeat(300) });
+    await until(() => nativeSender.sent.length === 1);
+    const wire = nativeSender.sent[0] as BridgeMessage;
+    expect(wire.type).toBe(PROTOCOL.BATCH);
+    expect(wire.__compressed).toBe(true);
+    sender.destroy();
+
+    // Receiver decompresses the envelope and unpacks the members.
+    const nativeRecv = installAndroidBridge();
+    const receiver = track(createBridge(), nativeRecv.uninstall);
+    const seen: string[] = [];
+    receiver.on("a", () => {
+      seen.push("a");
+    });
+    receiver.on("b", () => {
+      seen.push("b");
+    });
+
+    receiveFromNative(wire);
+    await until(() => seen.length === 2);
+    expect(seen.sort()).toEqual(["a", "b"]);
+  });
+
   it("decompresses incoming compressed payloads even when local compression is off", async () => {
     const nativeA = installAndroidBridge();
     // Sender bridge with compression on, to produce a compressed wire message
     const sender = createBridge({
-      compression: { enabled: true, algorithm: "deflate", threshold: 10 },
+      compression: { enabled: true, threshold: 10 },
     });
     await sender.send("data", { text: "y".repeat(500) });
     const wireMessage = nativeA.sent[0] as BridgeMessage;
@@ -81,6 +129,50 @@ describe("compression wiring", () => {
     receiveFromNative(wireMessage);
     await until(() => received.length === 1);
     expect(received[0]).toEqual({ text: "y".repeat(500) });
+  });
+
+  it("a corrupt compressed payload is dropped without killing the bridge", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(createBridge(), native.uninstall);
+
+    const received: unknown[] = [];
+    bridge.on("data", (payload) => {
+      received.push(payload);
+    });
+
+    // Garbage base64 with the __compressed flag: decompression throws.
+    receiveFromNative({
+      type: "data",
+      __compressed: true,
+      payload: "!!!not-valid-deflate!!!",
+    });
+
+    await wait(30);
+    // The corrupt message is dropped (not dispatched)...
+    expect(received).toHaveLength(0);
+
+    // ...and the bridge still works for the next, valid message.
+    receiveFromNative({ type: "data", payload: { ok: true } });
+    await until(() => received.length === 1);
+    expect(received[0]).toEqual({ ok: true });
+  });
+
+  it("leaves an incompressible payload uncompressed (no wire inflation)", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({ compression: { enabled: true, threshold: 10 } }),
+      native.uninstall,
+    );
+
+    // Random-ish, already-dense content above threshold: base64 of deflate is
+    // not smaller, so it must ship uncompressed.
+    const incompressible = Array.from({ length: 40 }, (_, i) =>
+      String.fromCharCode(33 + (i % 90)),
+    ).join("");
+    await bridge.send("blob", { d: incompressible });
+
+    expect(native.sent[0]?.__compressed).toBeUndefined();
+    expect(native.sent[0]?.payload).toEqual({ d: incompressible });
   });
 });
 
@@ -161,6 +253,36 @@ describe("batching wiring", () => {
     await until(() => seen.length === 2);
     expect(seen).toEqual(["x", "y"]);
   });
+
+  it("unbatches into the offline queue when the batch envelope send fails (8.11)", async () => {
+    // The batch envelope postMessage fails once; the member messages must land
+    // in the offline queue rather than being dropped.
+    const native = installAndroidBridge({ failTimes: 1 });
+    const bridge = track(
+      createBridge({
+        batching: { enabled: true, maxSize: 2, maxWait: 5000 },
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-batchfail",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("a", { n: 1 });
+    await bridge.send("b", { n: 2 }); // fills batch -> flush -> envelope fails
+
+    await until(() => (bridge.getQueueStats()?.size ?? 0) === 2);
+    expect(bridge.getQueueStats()?.size).toBe(2);
+
+    // Native recovered; flushing the queue delivers the individual messages.
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type).sort()).toEqual(["a", "b"]);
+  });
 });
 
 describe("offline queue wiring", () => {
@@ -193,6 +315,36 @@ describe("offline queue wiring", () => {
     expect(bridge.getQueueStats()?.completed).toBe(1);
   });
 
+  it("drops a message after maxRetries exhausted flush attempts (8.8)", async () => {
+    // Adapter keeps failing; with maxRetries: 2 the message is re-queued once
+    // then dropped and counted failed (not retried forever).
+    const native = installAndroidBridge({ failTimes: 100 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-retrycap",
+          autoFlush: false,
+          flushInterval: 0,
+          maxRetries: 2,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("doomed", {}); // fails -> queued (attempts 0)
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue(); // attempt 1 fails -> re-queued (attempts 1)
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue(); // attempt 2 fails -> attempts 2 == maxRetries -> dropped
+    expect(bridge.getQueueStats()?.size).toBe(0);
+    expect(bridge.getQueueStats()?.failed).toBe(1);
+  });
+
   it("honors priority ordering on flush", async () => {
     const native = installAndroidBridge({ failTimes: 3 });
     const bridge = track(
@@ -216,6 +368,34 @@ describe("offline queue wiring", () => {
 
     await bridge.flushQueue();
     expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
+  });
+
+  it("accepts the MessagePriority constant values (lowercase) as well as uppercase names", async () => {
+    // failTimes matches the 2 initial sends so both are queued; the flush then
+    // delivers them in priority order.
+    const native = installAndroidBridge({ failTimes: 2 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t2b",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Using MessagePriority.HIGH ("high") previously mapped to undefined and
+    // dropped the message; it must now queue and flush at HIGH priority.
+    await bridge.send("low", {}, { priority: MessagePriority.LOW });
+    await bridge.send("high", {}, { priority: MessagePriority.HIGH });
+    expect(bridge.getQueueStats()?.size).toBe(2);
+
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["high", "low"]);
   });
 
   it("migrates persisted queues keyed by legacy numeric priorities", async () => {
@@ -258,6 +438,104 @@ describe("offline queue wiring", () => {
     await bridge.flushQueue();
     expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
   });
+
+  it("parks messages while offline and flushes them on the online event (8.9)", async () => {
+    const native = installAndroidBridge();
+    const setOnLine = (value: boolean) =>
+      Object.defineProperty(navigator, "onLine", {
+        configurable: true,
+        get: () => value,
+      });
+    setOnLine(false);
+    cleanup.push(() => setOnLine(true));
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-offline",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Offline: the message is parked, nothing hits the wire.
+    await bridge.send("later", { v: 1 });
+    expect(native.sent).toHaveLength(0);
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    // Back online: the online event flushes the queue.
+    setOnLine(true);
+    window.dispatchEvent(new Event("online"));
+    await until(() => native.sent.length === 1);
+    expect(native.sent[0]).toMatchObject({ type: "later" });
+  });
+
+  it("survives corrupt persisted queue data without wedging (8.10)", async () => {
+    const storageKey = "t-corrupt";
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        queueData: {
+          normal: [
+            { message: { type: "good", payload: {} }, priority: "normal" },
+            { notAMessage: true }, // malformed entry must be dropped, not crash
+          ],
+        },
+        stats: { size: 999, pending: 999, failed: 5, completed: 3 }, // bogus
+      }),
+    );
+    cleanup.push(() => localStorage.removeItem(storageKey));
+
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: true,
+          storageKey,
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Only the valid entry loads; stats are recomputed from actual contents.
+    expect(bridge.getQueueStats()?.size).toBe(1);
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["good"]);
+  });
+
+  it("rejects a send instead of silently dropping when the queue is full", async () => {
+    // Adapter always fails; queue caps at 1. First failed send is queued,
+    // the second cannot be queued and must reject rather than resolve success.
+    const native = installAndroidBridge({ failTimes: 10 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 1,
+          persist: false,
+          storageKey: "t-overflow",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("first", {}); // fails at adapter → queued (size 1)
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    // Second send fails at adapter, queue is full → must reject, not resolve.
+    await expect(bridge.send("second", {})).rejects.toThrow();
+    expect(bridge.getQueueStats()?.size).toBe(1);
+  });
 });
 
 describe("metrics wiring", () => {
@@ -298,6 +576,47 @@ describe("metrics wiring", () => {
 
     await expect(bridge.send("fail", {})).rejects.toThrow();
     expect(bridge.getMetrics()?.messagesFailed).toBe(1);
+  });
+
+  it("successRate reflects mixed success and failure (not stuck at 1.0)", async () => {
+    // Fails the first send, succeeds the second.
+    const native = installAndroidBridge({ failTimes: 1 });
+    const bridge = track(
+      createBridge({
+        metrics: {
+          enabled: true,
+          updateInterval: 60000,
+          detailedTiming: false,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await expect(bridge.send("a", {})).rejects.toThrow(); // failure
+    await bridge.send("b", {}); // success
+
+    const metrics = bridge.getMetrics();
+    expect(metrics?.messagesSent).toBe(1);
+    expect(metrics?.messagesFailed).toBe(1);
+    // 1 success / (1 success + 1 failure) = 0.5, not the old stuck-at-1.0.
+    expect(metrics?.successRate).toBeCloseTo(0.5, 5);
+  });
+
+  it("successRate is not 1.0 when every send fails", async () => {
+    const native = installAndroidBridge({ failTimes: 5 });
+    const bridge = track(
+      createBridge({
+        metrics: {
+          enabled: true,
+          updateInterval: 60000,
+          detailedTiming: false,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await expect(bridge.send("x", {})).rejects.toThrow();
+    expect(bridge.getMetrics()?.successRate).toBe(0);
   });
 });
 

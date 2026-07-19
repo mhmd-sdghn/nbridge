@@ -17,12 +17,16 @@ export interface IPlatformAdapter {
   isAvailable(): boolean;
 
   /**
-   * Initialize the adapter
+   * Initialize the adapter and start receiving messages. Implementations must
+   * no-op when `window` is undefined (SSR), so calling this on the server is
+   * safe even though BridgeManager also guards.
    */
   initialize(onMessage: (message: BridgeMessage) => void): void;
 
   /**
-   * Send a message to the platform
+   * Send a message to the platform. Implementations THROW on failure (adapter
+   * unavailable, non-serializable payload, not in the expected context) rather
+   * than silently dropping, so the caller's retry/queue logic can engage.
    */
   send(message: BridgeMessage): void;
 

@@ -53,6 +53,8 @@ export interface CompiledTraitCondition {
  */
 export interface CompiledCapability {
   platforms: Partial<Record<BridgePlatform, CompiledCapabilityValue>>;
+  /** Fallback applied to any platform not explicitly listed (from the `all` key). */
+  all?: CompiledCapabilityValue;
   traits?: CompiledTraitCondition[];
 }
 
@@ -74,6 +76,8 @@ export interface CompiledVariant {
 export interface ResolveOptions {
   androidInterface?: string;
   iosHandler?: string;
+  /** Optional platform source; used instead of detectPlatform() when present. */
+  platformSource?: () => BridgePlatform;
   versionSource: HostVersionSource;
   /** Explicit version from `setVersion`; `null` means none set. */
   explicitVersion: string | null;
@@ -92,7 +96,9 @@ function resolveTrait(
   isServer: boolean,
 ): string | null {
   const { override, explicitTraits, traitSources } = options;
-  if (override?.traits && name in override.traits) {
+  // Value semantics: an explicit `undefined` means "no override" (fall through
+  // to the source); use `null` to force the trait to unknown.
+  if (override?.traits && override.traits[name] !== undefined) {
     return override.traits[name] ?? null;
   }
   if (isServer) return null;
@@ -117,12 +123,18 @@ export function resolveHost(options: ResolveOptions): ResolvedHost {
     platform = override.platform;
   } else if (isServer) {
     platform = "web";
+  } else if (options.platformSource) {
+    // Defer to the app-supplied source (e.g. the bridge) so the host engine and
+    // the bridge cannot disagree about the platform.
+    platform = options.platformSource();
   } else {
     platform = detectPlatform(options.androidInterface, options.iosHandler);
   }
 
   let versionRaw: string | null;
-  if (override && "version" in override) {
+  // Value semantics: `version: undefined` means "no override" (fall through to
+  // the source); `version: null` forces the version to unknown.
+  if (override && override.version !== undefined) {
     versionRaw = override.version ?? null;
   } else if (isServer) {
     versionRaw = null;
@@ -139,9 +151,12 @@ export function resolveHost(options: ResolveOptions): ResolvedHost {
     traits[name] = resolveTrait(name, options, isServer);
   }
   // A trait present only in an override (not declared) still takes effect.
+  // Skip keys explicitly set to undefined (value semantics: undefined == absent).
   if (override?.traits) {
     for (const name of Object.keys(override.traits)) {
-      if (!(name in traits)) traits[name] = override.traits[name] ?? null;
+      if (override.traits[name] !== undefined && !(name in traits)) {
+        traits[name] = override.traits[name] ?? null;
+      }
     }
   }
 
@@ -174,7 +189,8 @@ export function evaluateCapability(
   capability: CompiledCapability,
   host: ResolvedHost,
 ): boolean {
-  const value = capability.platforms[host.platform];
+  // Explicit platform key wins; otherwise fall back to the `all` default.
+  const value = capability.platforms[host.platform] ?? capability.all;
   if (value === undefined) return false;
   const base =
     value.kind === "bool"

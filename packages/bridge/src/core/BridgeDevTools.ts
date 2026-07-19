@@ -14,13 +14,15 @@ import type {
   QueueStats,
 } from "../types";
 import type { SchemaRegistry } from "../types/schema";
-import { isProductionEnv } from "../utils/env";
+import { isProductionEnvOrUnknown } from "../utils/env";
 import type { BridgeLogger } from "../utils/helpers";
 
 type ConsoleMethod = "log" | "error" | "warn" | "info" | "debug";
 
 /** Marker set on wrapped console methods so multiple bridge instances never stack interceptors. */
 const INTERCEPTED = "__nbridge_devtools_intercepted__";
+/** Stashes the function a wrapper replaced, so restore rebuilds the exact chain. */
+const PREVIOUS = "__nbridge_devtools_previous__";
 
 export class BridgeDevTools {
   private messages: DevToolsMessage[] = [];
@@ -37,28 +39,28 @@ export class BridgeDevTools {
     payload?: unknown,
     options?: BridgeSendOptions,
   ) => Promise<BridgeResponse>;
-  private originalConsole: Record<ConsoleMethod, (...args: unknown[]) => void>;
+  /** Console methods THIS instance actually wrapped (for exact restore). */
+  private readonly wrappedMethods = new Set<ConsoleMethod>();
+  /** The API object this instance installed on window.__BRIDGE_DEVTOOLS__ (ownership marker). */
+  private windowAPI?: NonNullable<Window["__BRIDGE_DEVTOOLS__"]>;
+  /** Monotonic counter for stable log ids. */
+  private logIdCounter = 0;
 
   constructor(
     private logger: BridgeLogger,
     private config: Required<DevToolsConfig>,
   ) {
     this.enabled = config.enabled;
-    this.originalConsole = {
-      log: console.log.bind(console),
-      error: console.error.bind(console),
-      warn: console.warn.bind(console),
-      info: console.info.bind(console),
-      debug: console.debug.bind(console),
-    };
 
     if (this.enabled && typeof window !== "undefined") {
-      if (isProductionEnv()) {
+      if (isProductionEnvOrUnknown()) {
         // Don't patch console or collect logs in production builds — there
-        // would be no inspection API to read them anyway.
+        // would be no inspection API to read them anyway. Fail closed: if the
+        // environment cannot be positively identified as dev/test, treat it as
+        // production so a plain <script> page never runs console patching.
         this.enabled = false;
         this.logger.warn(
-          "BridgeDevTools: disabled in production builds. Build with NODE_ENV=development to enable.",
+          "BridgeDevTools: disabled outside a confirmed development build. Set NODE_ENV=development (or import.meta.env.DEV) to enable.",
         );
         return;
       }
@@ -74,8 +76,10 @@ export class BridgeDevTools {
    */
   public setEnabled(enabled: boolean): void {
     if (enabled === this.enabled) return;
-    if (enabled && isProductionEnv()) {
-      this.logger.warn("BridgeDevTools: cannot enable in production builds");
+    if (enabled && isProductionEnvOrUnknown()) {
+      this.logger.warn(
+        "BridgeDevTools: cannot enable outside a confirmed development build",
+      );
       return;
     }
 
@@ -94,7 +98,7 @@ export class BridgeDevTools {
 
   private initializeWindowAPI(): void {
     if (typeof window === "undefined") return;
-    window.__BRIDGE_DEVTOOLS__ = {
+    this.windowAPI = {
       getMessages: () => this.getMessages(),
       getLogs: () => this.getLogs(),
       getMetrics: () => this.getMetricsInternal(),
@@ -112,6 +116,12 @@ export class BridgeDevTools {
       clearLogs: () => this.clearLogs(),
       setEnabled: (enabled: boolean) => this.setEnabled(enabled),
     };
+    if (window.__BRIDGE_DEVTOOLS__) {
+      this.logger.warn(
+        "DevTools: window.__BRIDGE_DEVTOOLS__ already exists (another bridge instance?) — overwriting",
+      );
+    }
+    window.__BRIDGE_DEVTOOLS__ = this.windowAPI;
   }
 
   private interceptConsole(): void {
@@ -128,13 +138,24 @@ export class BridgeDevTools {
       }
 
       const wrapped = (...args: unknown[]) => {
-        this.originalConsole[method](...args);
+        // Call the ACTUAL prior function (stashed on the wrapper), not a bound
+        // copy captured at construction — that copy could itself be another
+        // instance's wrapper, causing double recording.
+        current(...args);
         if (this.enabled) {
           this.addLog(level, args, Date.now(), "console");
         }
       };
-      (wrapped as { [INTERCEPTED]?: boolean })[INTERCEPTED] = true;
+      const tagged = wrapped as ((...args: unknown[]) => void) & {
+        [INTERCEPTED]?: boolean;
+        [PREVIOUS]?: (...args: unknown[]) => void;
+      };
+      tagged[INTERCEPTED] = true;
+      tagged[PREVIOUS] = current;
       console[method] = wrapped;
+      // Record only the methods THIS instance actually wrapped, so restore is
+      // exact even when another instance already owned some methods.
+      this.wrappedMethods.add(method);
     };
 
     interceptMethod("log", "log");
@@ -142,16 +163,21 @@ export class BridgeDevTools {
     interceptMethod("warn", "warn");
     interceptMethod("info", "info");
     interceptMethod("debug", "log");
-    this.consoleIntercepted = true;
+    this.consoleIntercepted = this.wrappedMethods.size > 0;
   }
 
   private restoreConsole(): void {
-    if (!this.consoleIntercepted) return;
-    console.log = this.originalConsole.log;
-    console.error = this.originalConsole.error;
-    console.warn = this.originalConsole.warn;
-    console.info = this.originalConsole.info;
-    console.debug = this.originalConsole.debug;
+    for (const method of this.wrappedMethods) {
+      const currentFn = console[method] as ((...args: unknown[]) => void) & {
+        [PREVIOUS]?: (...args: unknown[]) => void;
+      };
+      // Only restore if our wrapper is still installed (another instance may
+      // have wrapped on top since); restore the function we replaced.
+      if (currentFn?.[PREVIOUS]) {
+        console[method] = currentFn[PREVIOUS];
+      }
+    }
+    this.wrappedMethods.clear();
     this.consoleIntercepted = false;
   }
 
@@ -203,8 +229,19 @@ export class BridgeDevTools {
     message: BridgeMessage,
     direction: "sent" | "received",
   ): void {
+    // Snapshot the payload at capture so history is not a set of live
+    // references (later mutation would rewrite displayed history, and large
+    // live objects would stay pinned). Wire messages are JSON by contract, so
+    // a JSON round-trip is a safe, lossless-enough clone with a shallow fallback.
+    let snapshot: BridgeMessage = message;
+    try {
+      snapshot = JSON.parse(JSON.stringify(message)) as BridgeMessage;
+    } catch {
+      snapshot = { ...message };
+    }
+
     const devToolsMessage: DevToolsMessage = {
-      ...message,
+      ...snapshot,
       __devtools: {
         direction,
         timestamp: Date.now(),
@@ -214,7 +251,7 @@ export class BridgeDevTools {
     this.messages.push(devToolsMessage);
 
     // Enforce max message history limit
-    if (this.messages.length > this.config.maxMessageHistory) {
+    while (this.messages.length > this.config.maxMessageHistory) {
       this.messages.shift();
     }
 
@@ -238,6 +275,7 @@ export class BridgeDevTools {
     if (!this.enabled) return;
 
     const logEntry: DevToolsLog = {
+      id: ++this.logIdCounter,
       level,
       message,
       timestamp,
@@ -246,8 +284,9 @@ export class BridgeDevTools {
 
     this.logs.push(logEntry);
 
-    const maxConsoleLogEntries = this.config.maxConsoleLogEntries || 100;
-    if (this.logs.length > maxConsoleLogEntries) {
+    // `?? 100` (not `|| 100`) so an explicit 0 is honored, not coerced to 100.
+    const maxConsoleLogEntries = this.config.maxConsoleLogEntries ?? 100;
+    while (this.logs.length > maxConsoleLogEntries) {
       this.logs.shift();
     }
   }
@@ -285,11 +324,20 @@ export class BridgeDevTools {
   public destroy(): void {
     this.clear();
     this.logs = [];
+    this.enabled = false;
     this.restoreConsole();
 
-    if (typeof window !== "undefined" && window.__BRIDGE_DEVTOOLS__) {
+    // Only delete the global if it is still ours: another instance may have
+    // installed its own API since (last-writer-wins), and deleting theirs
+    // would sever a live devtools panel.
+    if (
+      typeof window !== "undefined" &&
+      this.windowAPI &&
+      window.__BRIDGE_DEVTOOLS__ === this.windowAPI
+    ) {
       delete window.__BRIDGE_DEVTOOLS__;
     }
+    this.windowAPI = undefined;
 
     this.logger.info("DevTools destroyed");
   }

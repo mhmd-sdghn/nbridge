@@ -12,10 +12,35 @@ export const PROTOCOL = {
   BATCH: "__nbridge_batch__",
 } as const;
 
+/**
+ * Request/response correlation suffixes. A handler registered via
+ * `onWithResponse("getUser", ...)` replies with `getUser_response` on success
+ * or `getUser_error` (payload `{ error: string }`) on failure, echoing the
+ * request's `id`. Native hosts implementing request/response must follow the
+ * same convention.
+ */
+export const RESPONSE_SUFFIX = "_response";
+export const ERROR_SUFFIX = "_error";
+
 export function isProtocolType(type: string): boolean {
   return (
     type === PROTOCOL.HANDSHAKE ||
     type === PROTOCOL.HANDSHAKE_ACK ||
     type === PROTOCOL.BATCH
   );
+}
+
+/** True when the type names a success reply (`<type>_response`). */
+export function isSuccessResponseType(type: string): boolean {
+  return type.endsWith(RESPONSE_SUFFIX);
+}
+
+/** True when the type names an error reply (`<type>_error`). */
+export function isErrorResponseType(type: string): boolean {
+  return type.endsWith(ERROR_SUFFIX);
+}
+
+/** True when the type names any reply (success or error). */
+export function isResponseType(type: string): boolean {
+  return isSuccessResponseType(type) || isErrorResponseType(type);
 }

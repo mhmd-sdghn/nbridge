@@ -1,5 +1,5 @@
 import type { BridgeMessage } from "../../types";
-import { type BridgeLogger, isValidMessage } from "../../utils/helpers";
+import { type BridgeLogger, parseBridgeFrame } from "../../utils/helpers";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
 /**
@@ -9,9 +9,11 @@ import type { IPlatformAdapter } from "./IPlatformAdapter";
 export class WebAdapter implements IPlatformAdapter {
   private messageListener: ((event: MessageEvent) => void) | null = null;
   private enableLoopback: boolean;
+  private logger?: BridgeLogger;
 
-  constructor(enableLoopback = false, _logger?: BridgeLogger) {
+  constructor(enableLoopback = false, logger?: BridgeLogger) {
     this.enableLoopback = enableLoopback;
+    this.logger = logger;
   }
 
   public getPlatformType() {
@@ -23,6 +25,7 @@ export class WebAdapter implements IPlatformAdapter {
   }
 
   public initialize(onMessage: (message: BridgeMessage) => void): void {
+    if (typeof window === "undefined") return;
     this.messageListener = (event: MessageEvent) => {
       // Accept same-origin messages. In loopback mode also accept origin=""
       // because jsdom's postMessage implementation fires events with an empty
@@ -34,8 +37,11 @@ export class WebAdapter implements IPlatformAdapter {
         return;
       }
 
-      const message = this.parseMessage(event.data);
-      if (!message) return;
+      const message = parseBridgeFrame(event.data);
+      if (!message) {
+        this.logger?.log("WebAdapter: ignored non-bridge message", event.data);
+        return;
+      }
 
       onMessage(message);
     };
@@ -64,12 +70,5 @@ export class WebAdapter implements IPlatformAdapter {
       window.removeEventListener("message", this.messageListener);
       this.messageListener = null;
     }
-  }
-
-  private parseMessage(data: unknown): BridgeMessage | null {
-    if (typeof data === "object" && data !== null && isValidMessage(data)) {
-      return data;
-    }
-    return null;
   }
 }

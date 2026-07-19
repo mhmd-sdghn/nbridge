@@ -9,11 +9,11 @@
 
 // Constants exports
 export { BridgeBackAction } from "./constants/backAction";
-export { MessagePriority } from "./constants/messagePriority";
 export {
-  BridgeMessageType,
-  type BridgeMessageTypeValue,
-} from "./constants/messageTypes";
+  MessagePriority,
+  type MessagePriorityName,
+  normalizePriority,
+} from "./constants/messagePriority";
 export { PROTOCOL } from "./constants/protocol";
 // Core exports
 export { BridgeManager, createBridge, getBridge } from "./core/BridgeManager";
@@ -52,11 +52,24 @@ export type {
   VariantWhen,
   VersionConstraint,
 } from "./host/types";
+// Version parsing/comparison utilities (public: for tooling that needs to
+// parse or compare host versions the same way the engine does).
+export {
+  type Constraint,
+  type ConstraintOperator,
+  type ParsedVersion,
+  parseConstraint,
+  parseConstraints,
+  parseVersion,
+  satisfies,
+} from "./host/version";
 // Middleware exports
 export {
   debugMiddleware,
   encryptionMiddleware,
+  FilteredMessageError,
   filterMiddleware,
+  isFilteredMessageError,
   loggingMiddleware,
   metadataMiddleware,
   retryMiddleware,

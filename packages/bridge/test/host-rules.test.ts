@@ -46,6 +46,33 @@ describe("capabilities", () => {
     expect(host.supports("newHeader")).toBe(true); // iframe: >=2, and 8.5.0 >= 2
   });
 
+  it("applies the `all` key as a fallback for unlisted platforms (finding 3.4)", () => {
+    const host = defineHostRules({
+      version: "8.5.0",
+      capabilities: {
+        // trait-free cross-platform capability without enumerating all four
+        promo: { all: true, web: false },
+        minVersion: { all: ">=8" },
+      },
+    });
+
+    host.setOverride({ platform: "android" });
+    expect(host.supports("promo")).toBe(true); // all: true
+    expect(host.supports("minVersion")).toBe(true); // 8.5.0 >= 8
+
+    host.setOverride({ platform: "web" });
+    expect(host.supports("promo")).toBe(false); // explicit web:false overrides all
+  });
+
+  it("rejects an unknown platform key at config time (finding 3.4)", () => {
+    expect(() =>
+      defineHostRules({
+        // @ts-expect-error typo'd platform key
+        capabilities: { oops: { webb: true } },
+      }),
+    ).toThrow(/Unknown key "webb"/);
+  });
+
   it("honors boolean literals regardless of version", () => {
     const host = defineHostRules({
       version: () => null, // unknown version
@@ -266,6 +293,30 @@ describe("setVersion / refresh / subscribe / override", () => {
     host.__setOverride(null);
     expect(host.info().platform).toBe("android");
     expect(host.info().version).toBe("9.0.0");
+  });
+});
+
+describe("platform source (3.9)", () => {
+  it("defers to a supplied platform detect function", () => {
+    const host = defineHostRules({
+      platform: { detect: () => "ios" },
+      capabilities: { nativeShare: { ios: true } },
+    });
+    // jsdom would detect "web", but the supplied source forces "ios".
+    expect(host.info().platform).toBe("ios");
+    expect(host.supports("nativeShare")).toBe(true);
+  });
+
+  it("accepts a BridgeManager-like object with getPlatform()", () => {
+    const fakeBridge = {
+      getPlatform: () => ({ platform: "android" as const }),
+    };
+    const host = defineHostRules({
+      platform: { detect: fakeBridge },
+      capabilities: { cam: { android: true } },
+    });
+    expect(host.info().platform).toBe("android");
+    expect(host.supports("cam")).toBe(true);
   });
 });
 

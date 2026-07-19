@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { createBridge } from "../src";
+import { createBridge, getBridge } from "../src";
 import type { BridgeManager } from "../src/core/BridgeManager";
 import { installAndroidBridge, receiveFromNative, until } from "./helpers";
 
@@ -92,6 +92,56 @@ describe("core messaging (Android adapter)", () => {
       payload: { total: 5 },
     });
   });
+
+  it("onWithResponse handler errors send a _error reply", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(createBridge(), native.uninstall);
+
+    bridge.onWithResponse("boom", () => {
+      throw new Error("handler exploded");
+    });
+
+    receiveFromNative({ type: "boom", id: "req-2", payload: {} });
+    await until(() => native.sent.length === 1);
+
+    expect(native.sent[0]).toMatchObject({
+      type: "boom_error",
+      id: "req-2",
+      payload: { error: "handler exploded" },
+    });
+  });
+
+  it("rejects sendWithResponse when the host replies with a _error message", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(createBridge(), native.uninstall);
+
+    const pending = bridge.sendWithResponse("failing", {}, 2000);
+
+    await until(() => native.sent.length === 1);
+    receiveFromNative({
+      type: "failing_error",
+      id: native.sent[0]?.id,
+      payload: { error: "native side failed" },
+    });
+
+    await expect(pending).rejects.toThrow("native side failed");
+  });
+
+  it("a _error reply without an error string still rejects with a useful message", async () => {
+    const native = installAndroidBridge();
+    const bridge = track(createBridge(), native.uninstall);
+
+    const pending = bridge.sendWithResponse("odd", {}, 2000);
+
+    await until(() => native.sent.length === 1);
+    receiveFromNative({
+      type: "odd_error",
+      id: native.sent[0]?.id,
+      payload: {},
+    });
+
+    await expect(pending).rejects.toThrow(/"odd" failed/);
+  });
 });
 
 describe("handshake / readiness", () => {
@@ -147,6 +197,51 @@ describe("handshake / readiness", () => {
 
     await expect(bridge.waitForReady(2000)).rejects.toThrow(/handshake/i);
     expect(bridge.isReady()).toBe(false);
+  });
+});
+
+describe("shared global lifecycle", () => {
+  it("destroying an older bridge does not sever the newest bridge's receive channel", async () => {
+    const native = installAndroidBridge();
+    const bridgeA = createBridge();
+    const bridgeB = track(createBridge(), native.uninstall);
+
+    const received: unknown[] = [];
+    bridgeB.on("ping", (payload) => {
+      received.push(payload);
+    });
+
+    // A was created first; B owns window.sendBridgeMessage now.
+    // Destroying A must NOT delete B's receiver.
+    bridgeA.destroy();
+
+    receiveFromNative({ type: "ping", payload: { n: 1 } });
+    await until(() => received.length === 1);
+    expect(received[0]).toEqual({ n: 1 });
+  });
+
+  it("destroy() resets the getBridge() singleton so the next getBridge() returns a live instance", () => {
+    const native = installAndroidBridge();
+    const first = getBridge();
+    first.destroy();
+
+    const second = getBridge();
+    cleanup.push(() => {
+      second.destroy();
+      native.uninstall();
+    });
+
+    expect(second).not.toBe(first);
+    expect(second.isReady()).toBe(true);
+  });
+
+  it("send() on a destroyed bridge rejects instead of talking to a dead adapter", async () => {
+    const native = installAndroidBridge();
+    const bridge = createBridge();
+    bridge.destroy();
+    native.uninstall();
+
+    await expect(bridge.send("anything", {})).rejects.toThrow(/destroyed/i);
   });
 });
 

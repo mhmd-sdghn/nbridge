@@ -94,7 +94,19 @@ function normalizeUrl(url: string): string | null {
   }
 }
 
-export function syncCurrentUrlIntoSession(): void {
+/**
+ * Record the current URL into the session mirror.
+ *
+ * @param source - Which navigation caused this sync. On "popstate" a URL that
+ *   already exists earlier in the list means the user went back, so we truncate
+ *   to that entry. On "push" (pushState) the same URL appearing earlier means a
+ *   forward re-visit of a previously seen page (e.g. list → detail → list), so
+ *   we must APPEND rather than truncate — truncating there would make the
+ *   session look shorter than real history and trigger a premature shutdown.
+ */
+export function syncCurrentUrlIntoSession(
+  source: "push" | "popstate" | "init" = "init",
+): void {
   if (!supportsSessionStorage() || typeof window === "undefined") {
     return;
   }
@@ -111,13 +123,33 @@ export function syncCurrentUrlIntoSession(): void {
     return;
   }
 
-  if (existingIndex >= 0) {
+  // Only interpret a re-visit as "went back" (truncate) for popstate/init.
+  // A pushState to a previously-seen URL is a forward navigation: append.
+  if (existingIndex >= 0 && source !== "push") {
     writeHistory(history.slice(0, existingIndex + 1));
     return;
   }
 
   history.push(normalizedCurrent);
   writeHistory(history);
+}
+
+/**
+ * True when the current document was loaded by a fresh navigation (not a
+ * back/forward traversal or reload). Used to fence the session mirror across
+ * hard document-load boundaries (e.g. a payment/OAuth hard-nav out and back),
+ * which the mirror cannot reconcile with real browser history.
+ */
+function isFreshDocumentLoad(): boolean {
+  try {
+    const entries = performance.getEntriesByType(
+      "navigation",
+    ) as PerformanceNavigationTiming[];
+    const nav = entries[0];
+    return nav?.type === "navigate";
+  } catch {
+    return false;
+  }
 }
 
 export function prepareSessionForRouterBack(): void {
@@ -173,31 +205,38 @@ export function ensureSessionHistoryTracking(): void {
 
   trackingInitialized = true;
 
+  // Fence across hard document loads: if this document was freshly loaded
+  // (not back/forward or reload), any pre-existing session entries may be
+  // separated from real browser history by an external hard navigation
+  // (payment/OAuth return). Trusting them could router.back() onto that
+  // external page, so start the mirror fresh.
+  if (isFreshDocumentLoad()) {
+    clearSessionHistory();
+  }
+
   const { history } = window;
   originalPushState = history.pushState.bind(history);
   originalReplaceState = history.replaceState.bind(history);
 
-  const sync = () => {
-    syncCurrentUrlIntoSession();
-  };
-
   history.pushState = ((...args) => {
     originalPushState?.(...args);
-    sync();
+    syncCurrentUrlIntoSession("push");
   }) as History["pushState"];
 
   history.replaceState = ((...args) => {
     originalReplaceState?.(...args);
-    sync();
+    // replaceState swaps the current entry in place: treat like push (append
+    // if new) rather than a back-truncation.
+    syncCurrentUrlIntoSession("push");
   }) as History["replaceState"];
 
   popstateListener = () => {
-    sync();
+    syncCurrentUrlIntoSession("popstate");
   };
 
   window.addEventListener("popstate", popstateListener);
 
-  sync();
+  syncCurrentUrlIntoSession("init");
 }
 
 export function isSessionHistoryEnabled(): boolean {

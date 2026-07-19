@@ -35,7 +35,7 @@ export class BatchManager {
     );
 
     if (this.pendingMessages.length >= this.config.maxSize) {
-      this.flush();
+      void this.flushSafely();
       return;
     }
 
@@ -46,16 +46,28 @@ export class BatchManager {
 
   private scheduleFlush(): void {
     this.flushTimer = setTimeout(() => {
-      this.flush();
+      void this.flushSafely();
     }, this.config.maxWait);
   }
 
+  /** Auto-flush path: swallow rejections (already logged) so they never become
+   * unhandled promise rejections; explicit `flushBatch()` still rethrows. */
+  private async flushSafely(): Promise<void> {
+    try {
+      await this.flush();
+    } catch {
+      // Already logged and counted in flush().
+    }
+  }
+
   /**
-   * Build the batch envelope and hand it to the flush callback (which sends
-   * it through the outgoing pipeline). Returns the envelope, or null when
-   * there was nothing to flush.
+   * Build the batch envelope and send it through the flush callback (the
+   * outgoing pipeline). Awaitable: the returned promise resolves once the
+   * envelope has actually been sent and rejects if the send fails, so callers
+   * (e.g. flush-before-navigation) get a real completion signal. Resolves to
+   * `null` when there was nothing to flush.
    */
-  public flush(): BridgeMessage | null {
+  public async flush(): Promise<BridgeMessage | null> {
     if (this.flushTimer) {
       clearTimeout(this.flushTimer);
       this.flushTimer = undefined;
@@ -83,19 +95,18 @@ export class BatchManager {
     if (!this.onFlush) {
       this.failedCount += messages.length;
       this.logger.error("Batch flush callback not set — batch dropped");
-      return batch;
+      throw new Error("Batch flush callback not set");
     }
 
-    this.onFlush(batch)
-      .then(() => {
-        this.sentCount += messages.length;
-      })
-      .catch((error) => {
-        this.failedCount += messages.length;
-        this.logger.error("Batch send failed:", error);
-      });
-
-    return batch;
+    try {
+      await this.onFlush(batch);
+      this.sentCount += messages.length;
+      return batch;
+    } catch (error) {
+      this.failedCount += messages.length;
+      this.logger.error("Batch send failed:", error);
+      throw error;
+    }
   }
 
   public getStats(): BatchStats {

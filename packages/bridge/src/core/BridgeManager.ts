@@ -1,5 +1,13 @@
-import { MessagePriority } from "../constants/messagePriority";
-import { isProtocolType, PROTOCOL } from "../constants/protocol";
+import { normalizePriority } from "../constants/messagePriority";
+import {
+  ERROR_SUFFIX,
+  isErrorResponseType,
+  isProtocolType,
+  isResponseType,
+  PROTOCOL,
+  RESPONSE_SUFFIX,
+} from "../constants/protocol";
+import { isFilteredMessageError } from "../middleware";
 import type {
   BatchStats,
   BridgeConfig,
@@ -25,6 +33,7 @@ import type {
 } from "../types/schema";
 import {
   BridgeLogger,
+  byteLength,
   createMessage,
   isValidMessage,
   safeStringify,
@@ -37,6 +46,11 @@ import { MessageHandler } from "./MessageHandler";
 import { MessageQueue } from "./MessageQueue";
 import { MetricsCollector } from "./MetricsCollector";
 import { MiddlewareManager } from "./MiddlewareManager";
+import {
+  DEFAULT_READY_TIMEOUT_MS,
+  normalizeConfig,
+  type ResolvedBridgeConfig,
+} from "./normalizeConfig";
 import { PlatformDetector } from "./PlatformDetector";
 import { ResponseManager } from "./ResponseManager";
 import { validateWithSchema } from "./validate";
@@ -48,7 +62,7 @@ interface ReadyWaiter {
 }
 
 function wireSize(message: BridgeMessage): number {
-  return new TextEncoder().encode(safeStringify(message)).length;
+  return byteLength(safeStringify(message));
 }
 
 export class BridgeManager<
@@ -70,7 +84,7 @@ export class BridgeManager<
   private readonly devTools: BridgeDevTools | null = null;
   private platformDetector: PlatformDetector;
   private readonly logger: BridgeLogger;
-  private config: Required<BridgeConfig<TSchemas>>;
+  private config: ResolvedBridgeConfig<TSchemas>;
   private readonly schemas?: TSchemas;
 
   private ready = false;
@@ -79,59 +93,21 @@ export class BridgeManager<
   private readyWaiters: ReadyWaiter[] = [];
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
   private onlineListener: (() => void) | null = null;
+  private isFlushing = false;
+  /** Maps a user handler passed to onWithResponse to the wrapper actually registered, so off() can remove it. */
+  // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
+  private readonly responseHandlerWrappers = new WeakMap<any, any>();
+  /** Cached platform info derived from the selected adapter (fixed at construction). */
+  private platformInfo: PlatformInfo | null = null;
 
   constructor(config: BridgeConfig<TSchemas> = {}) {
     this.schemas = config.schemas;
+    this.config = normalizeConfig(config);
 
-    this.config = {
-      debug: config.debug ?? false,
-      defaultTimeout: config.defaultTimeout ?? 5000,
-      androidInterface: config.androidInterface ?? "AndroidBridge",
-      iosHandler: config.iosHandler ?? "iosBridge",
-      schemas: config.schemas as TSchemas,
-      handshake: {
-        enabled: config.handshake?.enabled ?? false,
-        timeout: config.handshake?.timeout ?? 10000,
-        retryInterval: config.handshake?.retryInterval ?? 500,
-      },
-      middleware: config.middleware ?? { enabled: true },
-      compression: {
-        enabled: config.compression?.enabled ?? false,
-        algorithm: config.compression?.algorithm ?? "deflate",
-        threshold: config.compression?.threshold ?? 1024,
-        trackStats: config.compression?.trackStats ?? true,
-      },
-      queue: config.queue ?? {
-        enabled: false,
-        maxSize: 100,
-        persist: false,
-        storageKey: "nbridge-queue",
-        autoFlush: true,
-        flushInterval: 5000,
-      },
-      batching: config.batching ?? {
-        enabled: false,
-        maxSize: 10,
-        maxWait: 100,
-      },
-      metrics: config.metrics ?? {
-        enabled: false,
-        updateInterval: 1000,
-        detailedTiming: false,
-      },
-      devTools: config.devTools ?? {
-        enabled: false,
-        maxMessageHistory: 50,
-        logDestination: "devtools",
-        maxConsoleLogEntries: 100,
-      },
-      webLoopback: config.webLoopback ?? false,
-      // intentionally undefined when not configured; IframeAdapter handles this
-      iframeParentOrigin: config.iframeParentOrigin as string,
-    };
-
-    const logDestination = this.config.devTools.logDestination || "devtools";
-    this.logger = new BridgeLogger(this.config.debug, logDestination);
+    this.logger = new BridgeLogger(
+      this.config.debug,
+      this.config.devTools.logDestination,
+    );
     this.messageHandler = new MessageHandler(this.logger);
     this.responseManager = new ResponseManager(
       this.logger,
@@ -141,38 +117,55 @@ export class BridgeManager<
 
     this.compressionManager = new CompressionManager(
       this.logger,
-      this.config.compression as Required<typeof this.config.compression>,
+      this.config.compression,
     );
 
     if (this.config.queue.enabled) {
-      this.messageQueue = new MessageQueue(
-        this.logger,
-        this.config.queue as Required<typeof this.config.queue>,
-      );
+      this.messageQueue = new MessageQueue(this.logger, this.config.queue);
     }
 
     if (this.config.batching.enabled) {
-      this.batchManager = new BatchManager(
-        this.logger,
-        this.config.batching as Required<typeof this.config.batching>,
-      );
+      this.batchManager = new BatchManager(this.logger, this.config.batching);
       this.batchManager.setFlushCallback(async (batch) => {
-        await this.sendOutgoing(batch);
+        try {
+          await this.sendOutgoing(batch);
+        } catch (error) {
+          // Batch envelope failed to send. If a queue is configured, unbatch
+          // and enqueue each member message so they survive offline/retry.
+          const members = (
+            batch.payload as { messages?: BridgeMessage[] } | undefined
+          )?.messages;
+          if (this.messageQueue && members) {
+            this.logger.warn(
+              `Batch send failed — unbatching ${members.length} messages for retry`,
+            );
+            let allEnqueued = true;
+            for (const msg of members) {
+              if (!this.enqueue(msg, undefined)) {
+                allEnqueued = false;
+              }
+            }
+            if (!allEnqueued) {
+              this.logger.error(
+                "Some batch messages could not be enqueued (queue full)",
+              );
+            }
+          } else {
+            throw error;
+          }
+        }
       });
     }
 
     if (this.config.metrics.enabled) {
       this.metricsCollector = new MetricsCollector(
         this.logger,
-        this.config.metrics as Required<typeof this.config.metrics>,
+        this.config.metrics,
       );
     }
 
     if (this.config.devTools.enabled) {
-      this.devTools = new BridgeDevTools(
-        this.logger,
-        this.config.devTools as Required<typeof this.config.devTools>,
-      );
+      this.devTools = new BridgeDevTools(this.logger, this.config.devTools);
 
       this.logger.setLogCallback((level, message, timestamp) => {
         this.devTools?.addLog(level, message, timestamp);
@@ -219,7 +212,7 @@ export class BridgeManager<
       this.config.iosHandler,
       this.config.webLoopback,
       this.logger,
-      config.iframeParentOrigin,
+      this.config.iframeParentOrigin,
     );
 
     this.adapter = this.platformDetector.createAdapter();
@@ -287,7 +280,8 @@ export class BridgeManager<
   }
 
   private startHandshake(): void {
-    const { timeout = 10000, retryInterval = 500 } = this.config.handshake;
+    // config.handshake is fully resolved by normalizeConfig; no inline defaults.
+    const { timeout, retryInterval } = this.config.handshake;
     const startedAt = Date.now();
 
     const attempt = () => {
@@ -319,7 +313,14 @@ export class BridgeManager<
     return this.ready;
   }
 
-  public async waitForReady(timeout = 10000): Promise<void> {
+  /**
+   * Resolve once the bridge is ready. Behavior depends on `handshake.enabled`:
+   * with the handshake OFF (default) the bridge is ready as soon as local
+   * initialization completes, so this resolves effectively immediately; with it
+   * ON, it resolves only after the host acks the handshake and REJECTS if that
+   * does not happen within `timeout` ms.
+   */
+  public async waitForReady(timeout = DEFAULT_READY_TIMEOUT_MS): Promise<void> {
     if (this.ready) return;
     if (this.readyError) throw this.readyError;
     if (this.destroyed) throw new Error("Bridge destroyed");
@@ -362,22 +363,63 @@ export class BridgeManager<
       wireSize(message),
     );
 
-    let incoming = message;
-    if (incoming.__compressed && typeof incoming.payload === "string") {
-      const payload = this.compressionManager.decompress(incoming.payload);
-      incoming = { ...incoming, payload, __compressed: undefined };
+    let incoming: BridgeMessage;
+    try {
+      incoming = await this.maybeDecompress(message);
+    } catch (error) {
+      // A corrupt compressed response would otherwise strand the caller
+      // until timeout; reject the pending request immediately.
+      this.rejectPendingForBrokenMessage(message, error);
+      throw error;
     }
 
-    if (this.config.middleware?.enabled) {
-      await this.middlewareManager.executeIncoming(
-        incoming,
-        async (processedMessage) => {
-          await this.processIncomingMessage(processedMessage);
-        },
-        this,
+    try {
+      if (this.config.middleware.enabled) {
+        await this.middlewareManager.executeIncoming(
+          incoming,
+          async (processedMessage) => {
+            await this.processIncomingMessage(processedMessage);
+          },
+          this,
+        );
+      } else {
+        await this.processIncomingMessage(incoming);
+      }
+    } catch (error) {
+      this.rejectPendingForBrokenMessage(incoming, error);
+      throw error;
+    }
+  }
+
+  /** Decompress a `__compressed` payload; pass through everything else. */
+  private async maybeDecompress(
+    message: BridgeMessage,
+  ): Promise<BridgeMessage> {
+    if (message.__compressed && typeof message.payload === "string") {
+      const payload = await this.compressionManager.decompress(message.payload);
+      return { ...message, payload, __compressed: undefined };
+    }
+    return message;
+  }
+
+  /**
+   * When processing of an incoming reply fails (corrupt compression,
+   * middleware error), fail the matching pending request instead of letting
+   * it time out with no diagnostic.
+   */
+  private rejectPendingForBrokenMessage(
+    message: BridgeMessage,
+    error: unknown,
+  ): void {
+    if (
+      message.id &&
+      isResponseType(message.type) &&
+      this.responseManager.has(message.id)
+    ) {
+      this.responseManager.reject(
+        message.id,
+        error instanceof Error ? error : new Error(String(error)),
       );
-    } else {
-      await this.processIncomingMessage(incoming);
     }
   }
 
@@ -386,27 +428,54 @@ export class BridgeManager<
       const entries = (message.payload as { messages?: BridgeMessage[] })
         ?.messages;
       if (Array.isArray(entries)) {
-        for (const entry of entries) {
-          if (isValidMessage(entry)) {
-            await this.processIncomingMessage(entry);
-          }
-        }
+        // Dispatch entries concurrently: a slow handler on one entry must not
+        // head-of-line block the rest (non-batched delivery does not either).
+        // Entries may be individually compressed by the host.
+        await Promise.all(
+          entries
+            .filter((entry) => isValidMessage(entry))
+            .map(async (entry) =>
+              this.processIncomingMessage(await this.maybeDecompress(entry)),
+            ),
+        );
       }
       return;
     }
 
-    const isResponse =
-      message.type.endsWith("_response") || message.type.endsWith("_error");
-
-    if (isResponse && message.id && this.responseManager.has(message.id)) {
-      this.responseManager.resolve(message.id, message.payload);
-      return;
+    if (message.id && isResponseType(message.type)) {
+      if (this.responseManager.has(message.id)) {
+        if (isErrorResponseType(message.type)) {
+          const errorText =
+            typeof (message.payload as { error?: unknown })?.error === "string"
+              ? ((message.payload as { error: string }).error as string)
+              : `Request "${message.type.slice(0, -ERROR_SUFFIX.length)}" failed`;
+          this.responseManager.reject(message.id, new Error(errorText));
+        } else {
+          this.responseManager.resolve(message.id, message.payload);
+        }
+        return;
+      }
+      // A reply-shaped type with an unknown id falls through to normal
+      // dispatch: consumer event types ending in `_response`/`_error` are
+      // legal as long as their ids don't collide with a pending request.
     }
     await this.messageHandler.dispatch(message);
   }
 
   public getPlatform(): PlatformInfo {
-    return this.platformDetector.getPlatformInfo();
+    // Derive from the adapter actually selected (single source of truth) and
+    // cache it: the platform cannot change after construction, so re-running
+    // full detection and allocating a fresh object on every call is wasted work.
+    if (!this.platformInfo) {
+      const platform = this.adapter.getPlatformType();
+      this.platformInfo = {
+        platform,
+        isNative: platform === "android" || platform === "ios",
+        userAgent:
+          typeof navigator !== "undefined" ? navigator.userAgent : "unknown",
+      };
+    }
+    return this.platformInfo;
   }
 
   // ── Outgoing pipeline ─────────────────────────────────────────────────────
@@ -439,19 +508,11 @@ export class BridgeManager<
     payload?: T,
     options: BridgeSendOptions = {},
   ): Promise<BridgeResponse> {
-    let outgoingPayload: unknown = payload;
-
-    if (this.schemas && type in this.schemas) {
-      const schema = this.schemas[type];
-      if (schema?.payloadSchema) {
-        outgoingPayload = await validateWithSchema(
-          schema.payloadSchema,
-          payload,
-          type,
-          "payload",
-        );
-      }
+    if (this.destroyed) {
+      throw new Error(`Cannot send "${type}": bridge has been destroyed`);
     }
+
+    const outgoingPayload: unknown = await this.validatePayload(type, payload);
 
     const message = createMessage(type, outgoingPayload);
 
@@ -474,8 +535,11 @@ export class BridgeManager<
       } catch (error) {
         this.responseManager.reject(
           message.id,
-          error instanceof Error ? error.message : String(error),
+          error instanceof Error ? error : new Error(String(error)),
         );
+        // The rejected promise is never returned; mark it handled so the
+        // failure surfaces only through the throw below.
+        responsePromise.catch(() => {});
         throw error;
       }
 
@@ -534,20 +598,45 @@ export class BridgeManager<
       throw new Error(response.error || "Request failed");
     }
 
-    let data = response.data as R;
+    return (await this.validateResponse(type, response.data)) as R;
+  }
 
+  /** Validate an outgoing payload against its schema (if any) and return the
+   * possibly-transformed value. Shared by the send paths. */
+  private async validatePayload(
+    type: string,
+    payload: unknown,
+  ): Promise<unknown> {
+    if (this.schemas && type in this.schemas) {
+      const schema = this.schemas[type];
+      if (schema?.payloadSchema) {
+        return validateWithSchema(
+          schema.payloadSchema,
+          payload,
+          type,
+          "payload",
+        );
+      }
+    }
+    return payload;
+  }
+
+  /** Validate an incoming response against its schema (if any). */
+  private async validateResponse(
+    type: string,
+    data: unknown,
+  ): Promise<unknown> {
     if (this.schemas && type in this.schemas) {
       const schema = this.schemas[type];
       if (schema?.responseSchema) {
-        data = (await validateWithSchema(
+        return validateWithSchema(
           schema.responseSchema,
           data,
           type,
           "response",
-        )) as R;
+        );
       }
     }
-
     return data;
   }
 
@@ -555,55 +644,86 @@ export class BridgeManager<
    * Runs the outgoing middleware chain, then hands off to the adapter.
    * On adapter failure (or while offline) the message is parked in the
    * offline queue when one is configured; otherwise the error propagates.
+   *
+   * Response-expecting messages are NEVER queued: the caller's response
+   * timeout keeps ticking while a message sits in the queue, so a late flush
+   * would deliver a request after the caller already rejected (and could cause
+   * duplicate execution on retry). For those, we throw so the caller learns
+   * immediately that it was not delivered.
    */
   private async sendOutgoing(
     message: BridgeMessage,
     options?: BridgeSendOptions,
   ): Promise<void> {
+    const queueable =
+      !!this.messageQueue &&
+      !isProtocolType(message.type) &&
+      !this.isFlushing &&
+      !options?.expectResponse;
+
     if (
-      this.messageQueue &&
+      queueable &&
       typeof navigator !== "undefined" &&
-      navigator.onLine === false &&
-      !isProtocolType(message.type)
+      navigator.onLine === false
     ) {
-      this.enqueue(message, options);
+      const enqueued = this.enqueue(message, options);
+      if (!enqueued) {
+        throw new Error(
+          `Cannot send message "${message.type}" while offline: queue is full`,
+        );
+      }
       return;
     }
 
     try {
-      if (this.config.middleware?.enabled) {
+      if (this.config.middleware.enabled) {
         await this.middlewareManager.executeOutgoing(
           message,
           async (processedMessage) => {
-            this.sendMessageToAdapter(processedMessage);
+            await this.sendMessageToAdapter(processedMessage);
           },
           this,
         );
       } else {
-        this.sendMessageToAdapter(message);
+        await this.sendMessageToAdapter(message);
       }
     } catch (error) {
       this.metricsCollector?.recordFailed(message.id ?? message.type);
 
-      if (this.messageQueue && !isProtocolType(message.type)) {
-        this.logger.warn(
-          `Send failed for "${message.type}" — queued for retry`,
-        );
-        this.enqueue(message, options);
-        return;
+      // A filter-middleware block is intentional, not a transient failure:
+      // surface it to the caller without queueing it for retry.
+      if (queueable && !isFilteredMessageError(error)) {
+        const enqueued = this.enqueue(message, options);
+        if (enqueued) {
+          this.logger.warn(
+            `Send failed for "${message.type}" — queued for retry`,
+          );
+          return;
+        }
+        // Queue is full, let the error propagate
       }
 
       throw error;
     }
   }
 
-  private enqueue(message: BridgeMessage, options?: BridgeSendOptions): void {
-    const priority = MessagePriority[options?.priority ?? "NORMAL"];
-    this.messageQueue?.enqueue(message, options, priority);
+  private enqueue(
+    message: BridgeMessage,
+    options?: BridgeSendOptions,
+  ): boolean {
+    const priority = normalizePriority(options?.priority);
+    const enqueued = this.messageQueue?.enqueue(message, options, priority);
+    if (!enqueued) {
+      this.metricsCollector?.recordFailed(message.id ?? message.type);
+      this.logger.error(
+        `Failed to enqueue message "${message.type}" — queue full or disabled`,
+      );
+    }
+    return enqueued ?? false;
   }
 
-  private sendMessageToAdapter(message: BridgeMessage): void {
-    const wireMessage = this.maybeCompress(message);
+  private async sendMessageToAdapter(message: BridgeMessage): Promise<void> {
+    const wireMessage = await this.maybeCompress(message);
     try {
       this.adapter.send(wireMessage);
       this.logger.log("Sent message:", wireMessage);
@@ -618,7 +738,7 @@ export class BridgeManager<
     }
   }
 
-  private maybeCompress(message: BridgeMessage): BridgeMessage {
+  private async maybeCompress(message: BridgeMessage): Promise<BridgeMessage> {
     if (
       !this.config.compression.enabled ||
       message.payload === undefined ||
@@ -627,7 +747,7 @@ export class BridgeManager<
       return message;
     }
 
-    const compressed = this.compressionManager.compress(message.payload);
+    const compressed = await this.compressionManager.compress(message.payload);
     if (compressed === null) {
       return message;
     }
@@ -704,7 +824,7 @@ export class BridgeManager<
 
         if (message.id) {
           const responseMessage = createMessage(
-            `${type}_response`,
+            `${type}${RESPONSE_SUFFIX}`,
             result,
             message.id,
           );
@@ -715,9 +835,9 @@ export class BridgeManager<
 
         if (message.id) {
           const errorMessage = createMessage(
-            `${type}_error`,
+            `${type}${ERROR_SUFFIX}`,
             {
-              error: error instanceof Error ? error.message : "Unknown error",
+              error: error instanceof Error ? error.message : String(error),
             },
             message.id,
           );
@@ -726,12 +846,30 @@ export class BridgeManager<
       }
     };
 
+    // Remember which wrapper belongs to this user handler so a symmetric
+    // off(type, handler) can remove it (the Set is keyed by function identity,
+    // and the wrapper is not the identity the caller holds).
+    // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
+    this.responseHandlerWrappers.set(handler as any, wrappedHandler);
+
     return this.messageHandler.register(type, wrappedHandler);
   }
 
+  /**
+   * Remove a handler for `type`. Pass the same function reference given to
+   * `on`/`onWithResponse` (the onWithResponse wrapper is resolved internally).
+   * Omit `handler` to remove all handlers for `type` (same as
+   * `removeAllListeners(type)`).
+   */
   // biome-ignore lint/suspicious/noExplicitAny: Need to accept handlers of different types
   public off(type: string, handler?: BridgeMessageHandler<any>): void {
-    this.messageHandler.unregister(type, handler);
+    // Translate a user handler registered via onWithResponse to its wrapper so
+    // off(type, originalHandler) actually removes it.
+    const wrapper = handler
+      ? // biome-ignore lint/suspicious/noExplicitAny: identity map spans generic instantiations
+        this.responseHandlerWrappers.get(handler as any)
+      : undefined;
+    this.messageHandler.unregister(type, wrapper ?? handler);
   }
 
   public removeAllListeners(type?: string): void {
@@ -744,6 +882,7 @@ export class BridgeManager<
     this.middlewareManager.use(middleware);
   }
 
+  /** @deprecated Use `use()` — this is an exact alias kept for compatibility. */
   public addMiddleware(middleware: Middleware): void {
     this.use(middleware);
   }
@@ -769,13 +908,26 @@ export class BridgeManager<
   }
 
   public async flushQueue(): Promise<void> {
-    if (this.messageQueue) {
-      await this.messageQueue.flush(async (message) => {
-        // Queued messages already passed validation and middleware once;
-        // deliver them straight to the adapter so a middleware chain that
-        // stamps metadata does not run twice.
-        this.sendMessageToAdapter(message);
+    if (!this.messageQueue) {
+      return;
+    }
+    if (this.isFlushing) {
+      this.logger.warn("Flush already in progress, skipping");
+      return;
+    }
+    this.isFlushing = true;
+    try {
+      await this.messageQueue.flush(async (message, options) => {
+        // Re-run through sendOutgoing so middleware applies.
+        // Offline-queued messages never saw middleware (they were enqueued
+        // before the middleware chain at line 580); adapter-failure-queued
+        // messages did see middleware, but idempotent middleware (logging,
+        // metadata stamping) is safe to re-run, and stateful middleware
+        // (encryption, signing) needs a fresh run with current keys/nonces.
+        await this.sendOutgoing(message, options);
       });
+    } finally {
+      this.isFlushing = false;
     }
   }
 
@@ -788,16 +940,23 @@ export class BridgeManager<
   }
 
   /**
-   * Flush any pending batched messages to the wire immediately.
+   * Flush any pending batched messages to the wire immediately. Resolves once
+   * the batch envelope has actually been sent, and rejects if the send fails
+   * (useful for flush-before-navigation).
    */
-  public async batch(): Promise<void> {
-    this.batchManager?.flush();
+  public async flushBatch(): Promise<void> {
+    await this.batchManager?.flush();
   }
 
   public getMetrics(): BridgeMetrics | null {
     return this.metricsCollector?.getMetrics() ?? null;
   }
 
+  /**
+   * Subscribe to periodic metrics updates (fired every `metrics.updateInterval`
+   * ms). Returns an unsubscribe function; call it to stop listening. No-op
+   * (returns a no-op unsubscribe) when metrics are disabled.
+   */
   public onMetricsUpdate(listener: MetricsListener): () => void {
     if (this.metricsCollector) {
       this.metricsCollector.addListener(listener);
@@ -888,11 +1047,20 @@ export class BridgeManager<
 
     this.compressionManager.destroy();
     this.messageQueue?.destroy();
+    // Flush pending batched messages before tearing down so they are not
+    // silently dropped (best-effort: destroy() is sync, so we fire the flush
+    // and swallow rejection; the adapter is still alive at this point).
+    this.batchManager?.flush().catch(() => {});
     this.batchManager?.destroy();
     this.metricsCollector?.destroy();
     this.devTools?.destroy();
 
     this.ready = false;
+
+    // Reset singleton if this instance is the current one
+    if (bridgeInstance === this) {
+      bridgeInstance = null;
+    }
 
     this.logger.info("Bridge destroyed");
   }
@@ -904,6 +1072,11 @@ let bridgeInstance: BridgeManager<any> | null = null;
 export function getBridge<
   TSchemas extends SchemaRegistry | undefined = undefined,
 >(config?: BridgeConfig<TSchemas>): BridgeManager<TSchemas> {
+  if (bridgeInstance && config) {
+    console.warn(
+      "[nbridge] getBridge() called with config, but an instance already exists. Config is ignored. Use createBridge() to create a new instance, or destroy() the existing one first.",
+    );
+  }
   if (!bridgeInstance) {
     bridgeInstance = new BridgeManager(config);
   }
