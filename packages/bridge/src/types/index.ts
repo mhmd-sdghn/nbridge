@@ -356,11 +356,21 @@ export interface QueueConfig {
   /** @default 5000 */
   flushInterval?: number;
   /**
-   * How many delivery attempts a queued message gets before it is dropped
-   * (attempts made while offline do not count).
+   * How many delivery attempts a queued message gets before it is dropped.
    * @default 3
    */
   maxRetries?: number;
+  /**
+   * How long a message may sit in the queue before it is discarded instead of
+   * replayed, in milliseconds. Checked when the queue is loaded from storage
+   * and again at the start of every flush.
+   *
+   * Guards against a `persist: true` queue replaying commands from a previous
+   * session, long after they meant anything. Pass `Infinity` to keep entries
+   * forever.
+   * @default 86400000 (24 hours)
+   */
+  maxAge?: number;
 }
 
 /**

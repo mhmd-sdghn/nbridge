@@ -536,10 +536,12 @@ describe("offline queue wiring", () => {
     expect(native.sent.map((m) => m.type)).toEqual(["good"]);
   });
 
-  it("rejects a send instead of silently dropping when the queue is full", async () => {
-    // Adapter always fails; queue caps at 1. First failed send is queued,
-    // the second cannot be queued and must reject rather than resolve success.
-    const native = installAndroidBridge({ failTimes: 10 });
+  it("evicts the oldest same-priority message when the queue is full", async () => {
+    // Adapter always fails; queue caps at 1. A bounded ring beats rejecting:
+    // the newest state is the one worth replaying, and the caller is not
+    // handed an error for a fire-and-forget send it cannot act on.
+    // failTimes matches the 2 initial sends, so the later flush succeeds.
+    const native = installAndroidBridge({ failTimes: 2 });
     const bridge = track(
       createBridge({
         queue: {
@@ -557,9 +559,148 @@ describe("offline queue wiring", () => {
     await bridge.send("first", {}); // fails at adapter → queued (size 1)
     expect(bridge.getQueueStats()?.size).toBe(1);
 
-    // Second send fails at adapter, queue is full → must reject, not resolve.
-    await expect(bridge.send("second", {})).rejects.toThrow();
+    await bridge.send("second", {}); // evicts "first", queues "second"
     expect(bridge.getQueueStats()?.size).toBe(1);
+    expect(bridge.getQueueStats()?.failed).toBe(1); // the eviction is recorded
+
+    // Only the newer message survived to be replayed.
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["second"]);
+  });
+
+  it("drops a low-priority message rather than evicting a high-priority one", async () => {
+    const native = installAndroidBridge({ failTimes: 2 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 1,
+          persist: false,
+          storageKey: "t-priority-evict",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("critical", {}, { priority: "HIGH" });
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    // The queue is full of something that outranks this, so the newcomer is
+    // dropped — and, having genuinely not been delivered, it rejects.
+    await expect(
+      bridge.send("analytics", {}, { priority: "LOW" }),
+    ).rejects.toThrow();
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["critical"]);
+  });
+
+  it("evicts a low-priority message to make room for a high-priority one", async () => {
+    const native = installAndroidBridge({ failTimes: 2 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 1,
+          persist: false,
+          storageKey: "t-priority-room",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    await bridge.send("analytics", {}, { priority: "LOW" });
+    await bridge.send("critical", {}, { priority: "HIGH" });
+    expect(bridge.getQueueStats()?.size).toBe(1);
+
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["critical"]);
+  });
+
+  it("caps a persisted queue at maxSize on load", async () => {
+    const storageKey = "t-oversized";
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        queueData: {
+          normal: [1, 2, 3, 4, 5].map((n) => ({
+            message: { type: `m${n}`, payload: {} },
+            priority: "normal",
+            timestamp: Date.now(),
+          })),
+        },
+      }),
+    );
+    cleanup.push(() => localStorage.removeItem(storageKey));
+
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 2,
+          persist: true,
+          storageKey,
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // Storage held 5; the cap is 2, and the two newest survive.
+    expect(bridge.getQueueStats()?.size).toBe(2);
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["m4", "m5"]);
+  });
+
+  it("discards persisted messages older than maxAge instead of replaying them", async () => {
+    const storageKey = "t-stale";
+    localStorage.setItem(
+      storageKey,
+      JSON.stringify({
+        queueData: {
+          normal: [
+            {
+              message: { type: "stale-shutdown", payload: {} },
+              priority: "normal",
+              timestamp: Date.now() - 60_000,
+            },
+            {
+              message: { type: "fresh", payload: {} },
+              priority: "normal",
+              timestamp: Date.now(),
+            },
+          ],
+        },
+      }),
+    );
+    cleanup.push(() => localStorage.removeItem(storageKey));
+
+    const native = installAndroidBridge();
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: true,
+          storageKey,
+          autoFlush: false,
+          flushInterval: 0,
+          maxAge: 30_000,
+        },
+      }),
+      native.uninstall,
+    );
+
+    expect(bridge.getQueueStats()?.size).toBe(1);
+    await bridge.flushQueue();
+    expect(native.sent.map((m) => m.type)).toEqual(["fresh"]);
   });
 });
 
