@@ -35,6 +35,9 @@ features:
   - icon: 📦
     title: Batching, compression, retry queue
     details: Opt-in message batching, deflate compression above a size threshold, and a priority queue that parks undelivered sends and replays them automatically.
+  - icon: 🎛️
+    title: Host Rules
+    details: Map (platform, version) to named capabilities and variants in one config file, then ask host.supports("nativeShare") instead of scattering platform checks. Synchronous, no network, safe to import on the server.
   - icon: ⚛️
     title: React, Next.js, DevTools
     details: Typed hooks via nbridge/react, WebView back-navigation via nbridge/next, and an in-page DevTools panel via nbridge/devtools.
