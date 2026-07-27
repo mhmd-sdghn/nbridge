@@ -439,7 +439,11 @@ describe("offline queue wiring", () => {
     expect(native.sent.map((m) => m.type)).toEqual(["high", "normal", "low"]);
   });
 
-  it("parks messages while offline and flushes them on the online event (8.9)", async () => {
+  it("delivers to the host while navigator.onLine is false (8.9)", async () => {
+    // Every adapter is an in-process host call, so network reachability says
+    // nothing about deliverability. Gating on it used to park messages a
+    // working transport would have delivered — and, for a `shutdown`, replay
+    // them in a later session.
     const native = installAndroidBridge();
     const setOnLine = (value: boolean) =>
       Object.defineProperty(navigator, "onLine", {
@@ -462,16 +466,37 @@ describe("offline queue wiring", () => {
       native.uninstall,
     );
 
-    // Offline: the message is parked, nothing hits the wire.
     await bridge.send("later", { v: 1 });
-    expect(native.sent).toHaveLength(0);
-    expect(bridge.getQueueStats()?.size).toBe(1);
 
-    // Back online: the online event flushes the queue.
-    setOnLine(true);
-    window.dispatchEvent(new Event("online"));
-    await until(() => native.sent.length === 1);
-    expect(native.sent[0]).toMatchObject({ type: "later" });
+    expect(native.sent).toMatchObject([{ type: "later" }]);
+    expect(bridge.getQueueStats()?.size).toBe(0);
+  });
+
+  it("never queues an `immediate` message, even when the adapter fails", async () => {
+    const native = installAndroidBridge({ failTimes: 10 });
+    const bridge = track(
+      createBridge({
+        queue: {
+          enabled: true,
+          maxSize: 10,
+          persist: false,
+          storageKey: "t-immediate",
+          autoFlush: false,
+          flushInterval: 0,
+        },
+      }),
+      native.uninstall,
+    );
+
+    // A now-or-never command must fail loudly rather than be parked for replay.
+    await expect(
+      bridge.send("shutdown", {}, { immediate: true }),
+    ).rejects.toThrow();
+    expect(bridge.getQueueStats()?.size).toBe(0);
+
+    // A normal fire-and-forget send on the same bridge still queues.
+    await bridge.send("telemetry", {});
+    expect(bridge.getQueueStats()?.size).toBe(1);
   });
 
   it("survives corrupt persisted queue data without wedging (8.10)", async () => {

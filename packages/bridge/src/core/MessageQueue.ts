@@ -110,8 +110,8 @@ export class MessageQueue {
       `Queued message: ${message.type} with priority ${priority} (queue size: ${this.stats.size})`,
     );
 
-    // Debounce persistence: without this, filling the queue while offline
-    // rewrites the entire localStorage blob on every enqueue (O(N^2) aggregate).
+    // Debounce persistence: without this, a burst of failed sends rewrites the
+    // entire localStorage blob on every enqueue (O(N^2) aggregate).
     if (this.config.persist) {
       this.persistDebounced();
     }
@@ -339,12 +339,7 @@ export class MessageQueue {
 
     // Setup new timer
     this.flushTimer = setInterval(() => {
-      if (
-        !this.isEmpty() &&
-        !this.flushing &&
-        this.flushCallback &&
-        (typeof navigator === "undefined" || navigator.onLine !== false)
-      ) {
+      if (!this.isEmpty() && !this.flushing && this.flushCallback) {
         this.logger.log("Auto-flush triggered");
         this.flushCallback().catch((error) => {
           this.logger.error("Auto-flush failed:", error);

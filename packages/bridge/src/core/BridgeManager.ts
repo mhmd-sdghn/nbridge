@@ -92,7 +92,6 @@ export class BridgeManager<
   private readyError: Error | null = null;
   private readyWaiters: ReadyWaiter[] = [];
   private handshakeTimer: ReturnType<typeof setTimeout> | null = null;
-  private onlineListener: (() => void) | null = null;
   private isFlushing = false;
   /** Maps a user handler passed to onWithResponse to the wrapper actually registered, so off() can remove it. */
   // biome-ignore lint/suspicious/noExplicitAny: handler identity map spans generic instantiations
@@ -131,7 +130,7 @@ export class BridgeManager<
           await this.sendOutgoing(batch);
         } catch (error) {
           // Batch envelope failed to send. If a queue is configured, unbatch
-          // and enqueue each member message so they survive offline/retry.
+          // and enqueue each member message so they survive for retry.
           const members = (
             batch.payload as { messages?: BridgeMessage[] } | undefined
           )?.messages;
@@ -235,16 +234,6 @@ export class BridgeManager<
         this.logger.error("Failed to process incoming message:", error);
       });
     });
-
-    if (this.messageQueue) {
-      this.onlineListener = () => {
-        this.logger.info("Back online — flushing queued messages");
-        this.flushQueue().catch((error) => {
-          this.logger.error("Queue flush after reconnect failed:", error);
-        });
-      };
-      window.addEventListener("online", this.onlineListener);
-    }
 
     if (this.config.handshake.enabled) {
       this.startHandshake();
@@ -546,8 +535,10 @@ export class BridgeManager<
       return responsePromise;
     }
 
-    // Fire-and-forget messages are batchable.
-    if (this.batchManager && !isProtocolType(type)) {
+    // Fire-and-forget messages are batchable, unless the caller needs this one
+    // on the wire now (`immediate`) — the batcher would hold it for up to
+    // `batching.maxWait` ms, and a batch that fails unbatches into the queue.
+    if (this.batchManager && !isProtocolType(type) && !options.immediate) {
       this.batchManager.add(message);
       return { success: true, id: message.id };
     }
@@ -642,14 +633,21 @@ export class BridgeManager<
 
   /**
    * Runs the outgoing middleware chain, then hands off to the adapter.
-   * On adapter failure (or while offline) the message is parked in the
-   * offline queue when one is configured; otherwise the error propagates.
+   * On delivery failure the message is parked in the retry queue when one is
+   * configured; otherwise the error propagates.
+   *
+   * A thrown `adapter.send()` is the ONLY signal that delivery failed. Every
+   * adapter is an in-process host call (Android `@JavascriptInterface`, iOS
+   * `WKScriptMessageHandler`, iframe `postMessage`), so network reachability —
+   * `navigator.onLine` — says nothing about whether the host can be reached.
+   * Gating on it parked messages a working transport would have delivered.
    *
    * Response-expecting messages are NEVER queued: the caller's response
    * timeout keeps ticking while a message sits in the queue, so a late flush
    * would deliver a request after the caller already rejected (and could cause
    * duplicate execution on retry). For those, we throw so the caller learns
-   * immediately that it was not delivered.
+   * immediately that it was not delivered. `options.immediate` opts a message
+   * out for the same reason: a later replay would be incorrect.
    */
   private async sendOutgoing(
     message: BridgeMessage,
@@ -659,21 +657,8 @@ export class BridgeManager<
       !!this.messageQueue &&
       !isProtocolType(message.type) &&
       !this.isFlushing &&
-      !options?.expectResponse;
-
-    if (
-      queueable &&
-      typeof navigator !== "undefined" &&
-      navigator.onLine === false
-    ) {
-      const enqueued = this.enqueue(message, options);
-      if (!enqueued) {
-        throw new Error(
-          `Cannot send message "${message.type}" while offline: queue is full`,
-        );
-      }
-      return;
-    }
+      !options?.expectResponse &&
+      !options?.immediate;
 
     try {
       if (this.config.middleware.enabled) {
@@ -918,10 +903,8 @@ export class BridgeManager<
     this.isFlushing = true;
     try {
       await this.messageQueue.flush(async (message, options) => {
-        // Re-run through sendOutgoing so middleware applies.
-        // Offline-queued messages never saw middleware (they were enqueued
-        // before the middleware chain at line 580); adapter-failure-queued
-        // messages did see middleware, but idempotent middleware (logging,
+        // Re-run through sendOutgoing so middleware applies. Queued messages
+        // did already see middleware once, but idempotent middleware (logging,
         // metadata stamping) is safe to re-run, and stateful middleware
         // (encryption, signing) needs a fresh run with current keys/nonces.
         await this.sendOutgoing(message, options);
@@ -1030,11 +1013,6 @@ export class BridgeManager<
     if (this.handshakeTimer) {
       clearTimeout(this.handshakeTimer);
       this.handshakeTimer = null;
-    }
-
-    if (this.onlineListener && typeof window !== "undefined") {
-      window.removeEventListener("online", this.onlineListener);
-      this.onlineListener = null;
     }
 
     this.failReady(new Error("Bridge destroyed"));

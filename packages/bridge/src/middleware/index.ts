@@ -94,7 +94,7 @@ export function transformMiddleware(
  * intentional, not a transient failure).
  */
 export class FilteredMessageError extends Error {
-  /** Marker the send pipeline checks to skip offline-queue retry. */
+  /** Marker the send pipeline checks to skip retry-queue parking. */
   readonly nbridgeFiltered = true;
 
   constructor(messageType: string) {
