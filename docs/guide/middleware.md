@@ -32,7 +32,7 @@ Rules of the game:
 - **Register order = execution order.** `bridge.use(a); bridge.use(b)` runs `a` then `b` on the way in, `b` then `a` on the way back.
 - **Transform** by passing a modified message to `next({...message, payload: ... })`.
 - **Block** by *not* calling `next()` — the message is silently dropped.
-- **Fail** by throwing — an outgoing throw rejects the `send()` promise (and falls into the [offline queue](/guide/features/offline-queue) when enabled).
+- **Fail** by throwing — an outgoing throw rejects the `send()` promise (and falls into the [retry queue](/guide/features/retry-queue) when enabled).
 - **Both directions.** The same chain runs for outgoing and incoming messages; branch on `context.direction` when behavior should differ.
 - **Protocol messages skip it.** Handshake messages are handled before middleware; queued messages being replayed also skip the chain so stamping middleware does not run twice.
 

@@ -16,6 +16,8 @@ export const DEFAULT_HANDSHAKE_TIMEOUT_MS = 10000;
 export const DEFAULT_HANDSHAKE_RETRY_MS = 500;
 export const DEFAULT_READY_TIMEOUT_MS = 10000;
 export const DEFAULT_QUEUE_MAX_RETRIES = 3;
+/** 24h — a queued command older than this is never worth replaying. */
+export const DEFAULT_QUEUE_MAX_AGE_MS = 86_400_000;
 
 export type ResolvedQueueConfig = Required<QueueConfig>;
 export type ResolvedBatchConfig = Required<BatchConfig>;
@@ -85,6 +87,7 @@ export function normalizeConfig<
       autoFlush: config.queue?.autoFlush ?? true,
       flushInterval: config.queue?.flushInterval ?? 5000,
       maxRetries: config.queue?.maxRetries ?? DEFAULT_QUEUE_MAX_RETRIES,
+      maxAge: config.queue?.maxAge ?? DEFAULT_QUEUE_MAX_AGE_MS,
     },
     batching: {
       enabled: config.batching?.enabled ?? false,

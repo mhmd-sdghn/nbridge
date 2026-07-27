@@ -33,8 +33,11 @@ features:
     title: Middleware, both directions
     details: An onion-model pipeline for outgoing and incoming messages, plus ten built-ins — logging, retry, throttle, encryption, and more.
   - icon: 📦
-    title: Batching, compression, offline queue
-    details: Opt-in message batching, deflate compression above a size threshold, and a priority queue that persists offline sends and replays on reconnect.
+    title: Batching, compression, retry queue
+    details: Opt-in message batching, deflate compression above a size threshold, and a priority queue that parks undelivered sends and replays them automatically.
+  - icon: 🎛️
+    title: Host Rules
+    details: Map (platform, version) to named capabilities and variants in one config file, then ask host.supports("nativeShare") instead of scattering platform checks. Synchronous, no network, safe to import on the server.
   - icon: ⚛️
     title: React, Next.js, DevTools
     details: Typed hooks via nbridge/react, WebView back-navigation via nbridge/next, and an in-page DevTools panel via nbridge/devtools.

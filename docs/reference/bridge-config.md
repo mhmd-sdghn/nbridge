@@ -25,15 +25,16 @@ const bridge = createBridge({
 | `handshake` | `HandshakeConfig` | see below | Real-connection handshake. See [Core Concepts](/guide/core-concepts#lifecycle-and-readiness). |
 | `middleware` | `MiddlewareConfig` | `{ enabled: true }` | Middleware system toggle. See [Middleware](/guide/middleware). |
 | `compression` | `CompressionConfig` | see below | Deflate compression for large payloads. See [Compression](/guide/features/compression). |
-| `queue` | `QueueConfig` | see below | Offline queue. See [Offline Queue](/guide/features/offline-queue). |
+| `queue` | `QueueConfig` | see below | Retry queue. See [Retry Queue](/guide/features/retry-queue). |
 | `batching` | `BatchConfig` | see below | Message batching. See [Batching](/guide/features/batching). |
 | `metrics` | `MetricsConfig` | see below | Live metrics collection. See [Metrics](/guide/features/metrics). |
 | `devTools` | `DevToolsConfig` | see below | In-page DevTools collection. See [DevTools](/guide/devtools). |
 | `webLoopback` | `boolean` | `false` | Echo transport on plain web, for local development. See [Plain Web](/guide/platforms/web). |
 | `iframeParentOrigin` | `string` | `undefined` | Expected parent-frame origin — restricts accepted origins and sets the `postMessage` target origin. **Set in production iframe deployments.** |
 
-::: warning Partial vs. full sub-configs
-`handshake` and `compression` are merged field-by-field with defaults. `queue`, `batching`, `metrics`, and `devTools` replace the default block, and their types mark most fields required — pass the complete object as shown below.
+::: tip Partial sub-configs
+Every sub-config is merged field-by-field with the defaults below, so `{ enabled: true }` is
+enough to turn a feature on with documented behaviour for everything else.
 :::
 
 ## `handshake`
@@ -63,12 +64,14 @@ const bridge = createBridge({
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `enabled` | `boolean` | `false` | Park undeliverable messages instead of failing. |
-| `maxSize` | `number` | `100` | Total queued messages across all priorities; overflow is dropped with a warning. |
-| `persist` | `boolean` | `false` | Save the queue to `localStorage` and restore on next load. |
+| `enabled` | `boolean` | `false` | Park messages the adapter failed to deliver instead of failing the send. |
+| `maxSize` | `number` | `100` | Total queued messages across all priorities. At capacity the oldest lowest-priority entry is evicted; a message is dropped outright only when everything queued outranks it. |
+| `persist` | `boolean` | `false` | Save the queue to `localStorage` and restore on next load (trimmed to `maxSize`). |
 | `storageKey` | `string` | `"nbridge-queue"` | `localStorage` key used when `persist` is on. |
 | `autoFlush` | `boolean` | `true` | Retry delivery on an interval. |
 | `flushInterval` | `number` | `5000` | Auto-flush interval in ms. |
+| `maxRetries` | `number` | `3` | Delivery attempts before a queued message is dropped. |
+| `maxAge` | `number` | `86400000` | Discard entries older than this (ms), checked on load and before each flush. `Infinity` keeps them forever. |
 
 ## `batching`
 

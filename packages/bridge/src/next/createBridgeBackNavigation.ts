@@ -50,6 +50,12 @@ export function createBridgeBackNavigation(
     // against a rapid second tap popping browser history twice before the first
     // traversal's popstate lands.
     const backInFlightRef = useRef(false);
+    // The shutdown counterpart of backInFlightRef: guards the window between
+    // issuing the send and it settling, so two rapid taps send one shutdown.
+    // Released either way once settled — a delivered shutdown does not mean the
+    // host closed anything (it may prompt, or ignore the type), and latching it
+    // permanently would leave back dead for the rest of the session.
+    const shutdownInFlightRef = useRef(false);
     const navigationMode = navOptions?.mode ?? "session";
 
     // Guarantee back-intercept cleanup on unmount even if caller forgets
@@ -77,10 +83,23 @@ export function createBridgeBackNavigation(
     );
 
     const sendShutdownEvent = useCallback(async () => {
+      if (shutdownInFlightRef.current) return;
+      shutdownInFlightRef.current = true;
       try {
-        await bridge.send(shutdownEvent, {});
+        // The shutdown overtakes the batcher (below), so anything still waiting
+        // there would be lost when the host tears the WebView down. Get it out
+        // first; a failed batch is not a reason to keep the app open.
+        await bridge.flushBatch().catch(() => {});
+
+        // Shutting down is now-or-never: the host tears the WebView down, so a
+        // message parked in the retry queue would either never arrive or arrive
+        // in a later session and close the app out from under the user.
+        // `immediate` keeps it off both the batcher and the queue.
+        await bridge.send(shutdownEvent, {}, { immediate: true });
       } catch (err) {
         console.error("[nbridge] Failed to send shutdown message:", err);
+      } finally {
+        shutdownInFlightRef.current = false;
       }
     }, []);
 

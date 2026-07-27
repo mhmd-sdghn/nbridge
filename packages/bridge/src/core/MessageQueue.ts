@@ -81,10 +81,24 @@ export class MessageQueue {
       return false;
     }
 
-    // Check max size (total across all priorities)
-    const totalSize = this.getTotalSize();
-    if (totalSize >= this.config.maxSize) {
-      this.logger.warn(`Queue full (${this.config.maxSize}), dropping message`);
+    // Resolve the destination band BEFORE making room: an unmapped priority
+    // must not cost a real queued message its slot on the way to being rejected.
+    const priorityQueue = this.queue.get(priority);
+    if (!priorityQueue) {
+      this.logger.error(`Invalid priority: ${priority}`);
+      return false;
+    }
+
+    if (
+      this.getTotalSize() >= this.config.maxSize &&
+      !this.evictOne(priority)
+    ) {
+      // Nothing evictable outranked by the newcomer — it is the least valuable
+      // thing here, so it is what gets dropped.
+      this.logger.warn(
+        `Queue full (${this.config.maxSize}), dropping "${message.type}"`,
+      );
+      this.stats.failed++;
       return false;
     }
 
@@ -97,11 +111,6 @@ export class MessageQueue {
       priority,
     };
 
-    const priorityQueue = this.queue.get(priority);
-    if (!priorityQueue) {
-      this.logger.error(`Invalid priority: ${priority}`);
-      return false;
-    }
     priorityQueue.push(queuedMessage);
     this.stats.size = this.getTotalSize();
     this.stats.pending++;
@@ -110,13 +119,102 @@ export class MessageQueue {
       `Queued message: ${message.type} with priority ${priority} (queue size: ${this.stats.size})`,
     );
 
-    // Debounce persistence: without this, filling the queue while offline
-    // rewrites the entire localStorage blob on every enqueue (O(N^2) aggregate).
+    // Debounce persistence: without this, a burst of failed sends rewrites the
+    // entire localStorage blob on every enqueue (O(N^2) aggregate).
     if (this.config.persist) {
       this.persistDebounced();
     }
 
     return true;
+  }
+
+  /**
+   * Make room for a message of `incoming` priority by discarding the oldest
+   * entry in the lowest-priority non-empty band. Returns false when everything
+   * queued outranks the newcomer, in which case the caller drops it instead.
+   *
+   * Evicting rather than rejecting is what makes `priority` mean anything: a
+   * HIGH message must not lose its slot to LOW ones that merely arrived first.
+   */
+  private evictOne(incoming: MessagePriority): boolean {
+    for (let i = PRIORITY_ORDER.length - 1; i >= 0; i--) {
+      const band = PRIORITY_ORDER[i] as MessagePriority;
+      // Stop before evicting anything the newcomer does not outrank.
+      if (band === incoming) break;
+      const victims = this.queue.get(band);
+      const evicted = victims?.shift();
+      if (evicted) {
+        this.logger.warn(
+          `Queue full (${this.config.maxSize}), evicting ${band}-priority "${evicted.message.type}" to make room for a ${incoming}-priority message`,
+        );
+        this.stats.failed++;
+        this.stats.pending--;
+        return true;
+      }
+    }
+    // Same-priority tie: oldest of our own band loses (FIFO within a band).
+    const own = this.queue.get(incoming);
+    const evicted = own?.shift();
+    if (evicted) {
+      this.logger.warn(
+        `Queue full (${this.config.maxSize}), evicting oldest ${incoming}-priority "${evicted.message.type}"`,
+      );
+      this.stats.failed++;
+      this.stats.pending--;
+      return true;
+    }
+    return false;
+  }
+
+  /** Discard `count` entries, lowest priority and oldest first. */
+  private trimOldest(count: number): void {
+    let remaining = count;
+    for (let i = PRIORITY_ORDER.length - 1; i >= 0 && remaining > 0; i--) {
+      const entries = this.queue.get(PRIORITY_ORDER[i] as MessagePriority);
+      if (!entries?.length) continue;
+      const removed = entries.splice(0, Math.min(remaining, entries.length));
+      remaining -= removed.length;
+    }
+    const dropped = count - remaining;
+    this.stats.failed += dropped;
+    this.stats.pending -= dropped;
+    this.stats.size = this.getTotalSize();
+    this.logger.warn(
+      `Persisted queue exceeded maxSize (${this.config.maxSize}); dropped ${dropped} oldest message(s)`,
+    );
+  }
+
+  /** True when `entry` has sat in the queue longer than `config.maxAge`. */
+  private isExpired(entry: QueuedMessage, now: number): boolean {
+    return (
+      this.config.maxAge !== Infinity &&
+      typeof entry.timestamp === "number" &&
+      now - entry.timestamp > this.config.maxAge
+    );
+  }
+
+  /** Discard entries older than `config.maxAge`; returns how many were dropped. */
+  private dropExpired(): number {
+    if (this.config.maxAge === Infinity) return 0;
+    const now = Date.now();
+    let dropped = 0;
+    for (const band of PRIORITY_ORDER) {
+      const entries = this.queue.get(band);
+      if (!entries?.length) continue;
+      const kept = entries.filter((entry) => !this.isExpired(entry, now));
+      dropped += entries.length - kept.length;
+      entries.length = 0;
+      entries.push(...kept);
+    }
+    if (dropped > 0) {
+      this.stats.failed += dropped;
+      this.stats.pending -= dropped;
+      this.stats.size = this.getTotalSize();
+      this.logger.warn(
+        `Dropped ${dropped} queued message(s) older than ${this.config.maxAge}ms`,
+      );
+    }
+    return dropped;
   }
 
   private getTotalSize(): number {
@@ -137,6 +235,9 @@ export class MessageQueue {
       this.logger.warn("Already flushing queue");
       return;
     }
+
+    // Never replay a command that has gone stale waiting for its turn.
+    this.dropExpired();
 
     const totalSize = this.getTotalSize();
     if (totalSize === 0) {
@@ -286,7 +387,15 @@ export class MessageQueue {
           failed: 0,
           completed: 0,
         };
-        this.logger.info(`Loaded ${size} messages from storage`);
+
+        // Storage is not bound by `maxSize` — it was written by a build that
+        // may have had a larger cap, or by one that never enforced it on load.
+        // Trim before anything can act on an over-full queue.
+        this.dropExpired();
+        const overflow = this.getTotalSize() - this.config.maxSize;
+        if (overflow > 0) this.trimOldest(overflow);
+
+        this.logger.info(`Loaded ${this.getTotalSize()} messages from storage`);
       }
     } catch (error) {
       this.logger.error("Failed to load queue from storage:", error);
@@ -339,12 +448,7 @@ export class MessageQueue {
 
     // Setup new timer
     this.flushTimer = setInterval(() => {
-      if (
-        !this.isEmpty() &&
-        !this.flushing &&
-        this.flushCallback &&
-        (typeof navigator === "undefined" || navigator.onLine !== false)
-      ) {
+      if (!this.isEmpty() && !this.flushing && this.flushCallback) {
         this.logger.log("Auto-flush triggered");
         this.flushCallback().catch((error) => {
           this.logger.error("Auto-flush failed:", error);

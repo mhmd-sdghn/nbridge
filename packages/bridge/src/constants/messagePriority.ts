@@ -1,5 +1,5 @@
 /**
- * Message priority levels for the offline queue.
+ * Message priority levels for the retry queue.
  * Messages are flushed highest priority first.
  */
 export const MessagePriority = {

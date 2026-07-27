@@ -73,13 +73,23 @@ export interface BridgeSendOptions {
   timeout?: number;
   expectResponse?: boolean;
   /**
-   * Queue priority used when the message cannot be delivered immediately
-   * (offline or adapter failure) and the offline queue is enabled. Accepts
-   * either the uppercase names ("HIGH") or the exported `MessagePriority`
-   * constant values ("high") — both are normalized internally.
+   * Queue priority used when delivery fails and the retry queue is enabled.
+   * Accepts either the uppercase names ("HIGH") or the exported
+   * `MessagePriority` constant values ("high") — both are normalized
+   * internally.
    * @default "NORMAL"
    */
   priority?: "HIGH" | "NORMAL" | "LOW" | "high" | "normal" | "low";
+  /**
+   * Deliver on this tick or fail. Bypasses both deferral mechanisms — the
+   * batcher and the retry queue — so a failure rejects instead of being parked.
+   *
+   * Use for now-or-never commands whose effect depends on current state, where
+   * a later replay would be incorrect: closing the WebView, dismissing a
+   * screen, acknowledging something the user is looking at right now.
+   * @default false
+   */
+  immediate?: boolean;
 }
 
 /**
@@ -288,13 +298,13 @@ export interface IBridgeManager {
   /** Subscribe to periodic metrics updates; returns an unsubscribe function. */
   onMetricsUpdate(listener: MetricsListener): () => void;
 
-  /** Offline-queue stats, or null when the queue is disabled. */
+  /** Retry-queue stats, or null when the queue is disabled. */
   getQueueStats(): QueueStats | null;
 
-  /** Flush the offline queue. */
+  /** Flush the retry queue. */
   flushQueue(): Promise<void>;
 
-  /** Clear the offline queue. */
+  /** Clear the retry queue. */
   clearQueue(): void;
 
   /** Batch stats, or null when batching is disabled. */
@@ -346,11 +356,21 @@ export interface QueueConfig {
   /** @default 5000 */
   flushInterval?: number;
   /**
-   * How many delivery attempts a queued message gets before it is dropped
-   * (attempts made while offline do not count).
+   * How many delivery attempts a queued message gets before it is dropped.
    * @default 3
    */
   maxRetries?: number;
+  /**
+   * How long a message may sit in the queue before it is discarded instead of
+   * replayed, in milliseconds. Checked when the queue is loaded from storage
+   * and again at the start of every flush.
+   *
+   * Guards against a `persist: true` queue replaying commands from a previous
+   * session, long after they meant anything. Pass `Infinity` to keep entries
+   * forever.
+   * @default 86400000 (24 hours)
+   */
+  maxAge?: number;
 }
 
 /**
