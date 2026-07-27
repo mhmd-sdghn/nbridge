@@ -16,7 +16,7 @@
 - **Handshake protocol** — `ready` means the other side actually answered
 - **Middleware** — intercept, transform, or block messages in both directions
 - **Batching & compression** — opt-in wire optimizations
-- **Offline queue** — messages survive disconnects and replay on reconnect
+- **Retry queue** — messages the host could not accept are parked and replayed, with priorities
 - **Host Rules** — map `(platform, version)` to named capabilities and variants in one config file ([docs](https://mhmd-sdghn.github.io/nbridge/guide/features/host-rules))
 - **React bindings** — `nbridge/react` hooks; `nbridge/next` back-navigation helpers
 - **DevTools** — in-page panel: event history, logs, metrics, schema-driven event sender

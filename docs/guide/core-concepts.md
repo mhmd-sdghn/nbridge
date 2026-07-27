@@ -100,7 +100,7 @@ Outgoing, in order:
 2. **Batching** — fire-and-forget messages are buffered when enabled ([Batching](/guide/features/batching))
 3. **Middleware chain** — outgoing direction ([Middleware](/guide/middleware))
 4. **Compression** — large payloads deflated when enabled ([Compression](/guide/features/compression))
-5. **Adapter** — hand off to the platform; failures fall into the [Offline Queue](/guide/features/offline-queue) when enabled
+5. **Adapter** — hand off to the platform; failures fall into the [Retry Queue](/guide/features/retry-queue) when enabled
 
 Incoming, in order:
 

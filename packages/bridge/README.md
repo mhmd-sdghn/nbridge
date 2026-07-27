@@ -46,7 +46,7 @@ const user = await bridge.sendWithResponse("getUser", { id: "1" });
 - **Honest readiness** — opt-in handshake protocol; `ready` means the host
   actually answered.
 - **Middleware** in both directions, opt-in **batching** and **deflate
-  compression**, an **offline queue** with priorities and reconnect replay,
+  compression**, a **retry queue** with priorities and automatic replay,
   and live **metrics**.
 - **Host Rules** — a local, deterministic engine that maps `(platform, version)`
   to named capabilities and variants, so per-host UI logic lives in one config

@@ -27,9 +27,9 @@ const res = await bridge.send("getUser", { id: "1" }, { expectResponse: true, ti
 // res: { success: true, data: {...}, id: "..." }
 ```
 
-`BridgeSendOptions`: `timeout?: number`, `expectResponse?: boolean`, `priority?: "HIGH" | "NORMAL" | "LOW"` (queue priority, default `"NORMAL"`).
+`BridgeSendOptions`: `timeout?: number`, `expectResponse?: boolean`, `priority?: "HIGH" | "NORMAL" | "LOW"` (queue priority, default `"NORMAL"`), `immediate?: boolean` (default `false` — deliver on this tick or fail, bypassing the batcher and the retry queue; use for now-or-never commands where a later replay would be wrong).
 
-Rejects on validation failure (`BridgeValidationError`), middleware error, or adapter failure (unless the [offline queue](/guide/features/offline-queue) absorbs it).
+Rejects on validation failure (`BridgeValidationError`), middleware error, or adapter failure (unless the [retry queue](/guide/features/retry-queue) absorbs it).
 
 ### `sendWithResponse(type, payload?, timeout?)`
 
@@ -99,12 +99,12 @@ bridge.getPlatform();
 // { platform: "android" | "ios" | "iframe" | "web", isNative: boolean, userAgent: string }
 ```
 
-## Offline queue
+## Retry queue
 
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `getQueueStats()` | `QueueStats \| null` | `{ size, pending, failed, completed }`; `null` when the queue is disabled. |
-| `flushQueue()` | `Promise<void>` | Replay queued messages now (straight to the adapter — middleware does not run twice). |
+| `flushQueue()` | `Promise<void>` | Replay queued messages now. Replays go back through the outgoing middleware chain, so stateful middleware (encryption, signing) runs with current keys. |
 | `clearQueue()` | `void` | Drop all queued messages. |
 
 ## Batching
@@ -112,7 +112,7 @@ bridge.getPlatform();
 | Method | Returns | Notes |
 | --- | --- | --- |
 | `getBatchStats()` | `BatchStats \| null` | `{ pending, sent, failed, totalBatches }`; `null` when batching is disabled. |
-| `batch()` | `Promise<void>` | Flush pending batched messages to the wire immediately. |
+| `flushBatch()` | `Promise<void>` | Flush pending batched messages to the wire immediately. Resolves once the envelope is sent, and rejects if the send fails — useful before navigating away or shutting down. |
 
 ## Compression
 

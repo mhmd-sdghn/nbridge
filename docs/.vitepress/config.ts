@@ -50,7 +50,7 @@ export default defineConfig({
           items: [
             { text: "Batching", link: "/guide/features/batching" },
             { text: "Compression", link: "/guide/features/compression" },
-            { text: "Offline Queue", link: "/guide/features/offline-queue" },
+            { text: "Retry Queue", link: "/guide/features/retry-queue" },
             { text: "Metrics", link: "/guide/features/metrics" },
             { text: "Host Rules", link: "/guide/features/host-rules" },
           ],

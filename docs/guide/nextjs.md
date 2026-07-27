@@ -39,6 +39,13 @@ import { BridgeBackAction } from "nbridge";
 
 When the WebView should close, the bridge sends `{ type: "shutdown", payload: {} }` to the host — the host implements the actual close.
 
+The send is made with `{ immediate: true }`, so it never enters the batcher or the [retry queue](/guide/features/retry-queue): the host is about to tear the WebView down, so a parked copy would either never arrive or arrive in a later session and close the app out from under the user. A delivery failure is logged rather than retried.
+
+Two details worth knowing:
+
+- Any messages still waiting in the batcher are flushed first, since the shutdown would otherwise overtake them and the host would destroy the WebView before they went out.
+- Taps that land while a shutdown is still in flight are ignored, so a double tap sends one shutdown. Once it settles the guard releases — a delivered shutdown does not mean the host closed anything (it may prompt and let the user cancel), so a later tap must still work.
+
 ## `useBridgeBack`
 
 ```tsx
