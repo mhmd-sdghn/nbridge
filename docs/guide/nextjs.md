@@ -17,11 +17,13 @@ export const { useBridgeSend, instance } = createBridgeHooks({
   config: { debug: true },
 });
 
-export const { useBridgeBack } = createBridgeBackNavigation(
-  instance,
-  { shutdownEvent: "shutdown" }, // message type sent to close the WebView (default: "shutdown")
-);
+export const { useBridgeBack } = createBridgeBackNavigation(instance, {
+  shutdownEvent: "shutdown", // message type sent to close the WebView (default: "shutdown")
+  basePath: process.env.NEXT_PUBLIC_BASE_PATH, // your Next.js basePath, if any
+});
 ```
+
+`basePath` is only used to match [back intercepts](#intercepting-back-on-one-page) to pages. Leave it out when the app has no `basePath`.
 
 ::: tip Server Components
 `BridgeBackAction` is a plain string-constant object exported from the **root
@@ -68,7 +70,7 @@ Returned API:
 
 | Function | Behavior |
 | --- | --- |
-| `routerBackOrShutdown(force?)` | `router.back()` when in-app history exists, otherwise send the shutdown event. Force a branch with `BridgeBackAction.RouterBack` or `BridgeBackAction.AppShutdown` (imported from `nbridge`). |
+| `routerBackOrShutdown(force?)` | `router.back()` when in-app history exists, otherwise send the shutdown event. Force a branch with `BridgeBackAction.RouterBack` or `BridgeBackAction.AppShutdown` (imported from `nbridge`). While a back intercept is armed on the page, it steps past the intercept's extra history entry, so one call always leaves the page. |
 | `canRouterBack()` | `true` when a router back-step is available. |
 | `forceBrowserBackToShutdownApp()` | Arms a one-shot intercept of the browser/hardware back gesture that sends the shutdown event instead of navigating. |
 | `removeForceBrowserBackToShutdownApp()` | Disarms the intercept (also removed automatically on unmount). |
@@ -111,6 +113,42 @@ The intercept is one-shot: after it fires once (sending the shutdown event) it u
 
 An empty dependency array is fine here — the effect is safe under React StrictMode's dev-only mount → cleanup → remount cycle (the intercept manager distinguishes its own history cleanup from a real back press, so remounting never triggers a shutdown). All functions returned by `useBridgeBack` are also referentially stable (`useCallback`), so including them in a dependency array is equally safe.
 
+### Intercepting back on one page
+
+`useBackIntercept` runs a callback instead of navigating when the user presses back — for example, to ask "discard your changes?" on a form:
+
+```tsx
+"use client";
+
+import { useBackIntercept } from "nbridge/next";
+
+export function FormHeader({ isDirty }: { isDirty: boolean }) {
+  useBackIntercept(
+    () => openDiscardDialog(),
+    "/point-info-form", // which page it guards
+    isDirty, // armed only while there is something to lose
+  );
+  return null;
+}
+```
+
+The second argument says which page the intercept belongs to:
+
+| Value | Matches |
+| --- | --- |
+| `"*"` (default) | every page |
+| a string | exactly that page, e.g. `"/point-info-form"` |
+| a `RegExp` | any page whose path it matches, e.g. `/^\/work-hours/` |
+
+Paths are the ones your app sees: **without the `basePath`**, and a trailing slash does not matter. That is the value `usePathname()` returns, so passing it straight through works, with or without `trailingSlash: true`. Pass the `basePath` once to `createBridgeBackNavigation` (see [Setup](#setup)).
+
+How it behaves:
+
+- The intercept keeps firing on every back press until you disarm it (pass `false`, or unmount). Guard your callback if it must not run twice.
+- When several intercepts match, the most recently registered one fires.
+- A forward press never fires it.
+- If the user leaves the page while it is armed, the extra history entry it used is skipped when they come back, so no back press is wasted.
+
 ## Lower-level exports
 
 For custom setups, `nbridge/next` also exports the pieces `useBridgeBack` is built from:
@@ -119,6 +157,7 @@ For custom setups, `nbridge/next` also exports the pieces `useBridgeBack` is bui
 import {
   useBackIntercept,          // React hook around the back-intercept manager
   BackInterceptManager,      // singleton managing popstate interception
+  type BackInterceptPath,    // "*" | string | RegExp — what an intercept matches
   setupBackInterception,     // imperative one-shot intercept, returns cleanup
   canNavigateBack,           // session- or browser-mode back check
   resolveNavigationMode,
