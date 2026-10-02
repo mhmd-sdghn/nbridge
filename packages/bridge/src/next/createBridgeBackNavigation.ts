@@ -4,6 +4,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef } from "react";
 import { BridgeBackAction } from "../constants/backAction";
 import type { IBridgeManager } from "../types";
+import { BackInterceptManager } from "./navigation/BackInterceptManager";
 import {
   ensureSessionHistoryTracking,
   prepareSessionForRouterBack,
@@ -23,6 +24,13 @@ export interface CreateBridgeBackNavigationOptions {
    * @default "shutdown"
    */
   shutdownEvent?: string;
+  /**
+   * The Next.js `basePath` the app is served under (e.g. `"/add-point"`).
+   * Back intercepts match their paths against the pathname without it, so a
+   * path can be passed the way the app sees it — the value `usePathname()`
+   * returns. Leave unset when the app has no basePath.
+   */
+  basePath?: string;
 }
 
 /**
@@ -41,6 +49,11 @@ export function createBridgeBackNavigation(
   options: CreateBridgeBackNavigationOptions = {},
 ) {
   const shutdownEvent = options.shutdownEvent ?? "shutdown";
+  if (options.basePath !== undefined) {
+    BackInterceptManager.getInstance().configure({
+      basePath: options.basePath,
+    });
+  }
 
   function useBridgeBack(navOptions?: BridgeBackNavigationOptions) {
     const router = useRouter();
@@ -133,7 +146,11 @@ export function createBridgeBackNavigation(
           if (resolvedMode === "session") {
             prepareSessionForRouterBack();
           }
-          router.back();
+          // With an intercept's trap entry on top, router.back() would only pop
+          // the trap and leave the user on the same page.
+          if (!BackInterceptManager.getInstance().backPastTrap()) {
+            router.back();
+          }
         } else if (!force || force === BridgeBackAction.AppShutdown) {
           await sendShutdownEvent();
         }

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { BridgeBackAction } from "../src/constants/backAction";
 import { createBridgeBackNavigation } from "../src/next/createBridgeBackNavigation";
 import { BackInterceptManager } from "../src/next/navigation/BackInterceptManager";
+import { useBackIntercept } from "../src/next/navigation/useBackIntercept";
 import { setupBackInterception } from "../src/next/navigation/utils";
 import type { IBridgeManager } from "../src/types";
 import { wait } from "./helpers";
@@ -97,6 +98,184 @@ describe("BackInterceptManager trap lifecycle", () => {
     window.history.back();
     await flushHistory();
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("BackInterceptManager path matching", () => {
+  const manager = () => BackInterceptManager.getInstance();
+  const go = (url: string) => window.history.pushState({}, "", url);
+
+  // An app served under `basePath: "/add-point"` with `trailingSlash: true`:
+  // usePathname() reports "/point-info-form/" while the browser is at
+  // "/add-point/point-info-form/".
+  const onFormUnderBasePath = () => {
+    manager().configure({ basePath: "/add-point" });
+    go("/add-point/options/");
+    go("/add-point/point-info-form/");
+  };
+
+  it.each([
+    "/point-info-form/",
+    "/point-info-form",
+    "point-info-form",
+  ])("matches %j exactly against the app path under a basePath", async (path) => {
+    onFormUnderBasePath();
+    const onBack = vi.fn();
+    manager().register(onBack, path, true);
+    await flushHistory();
+
+    window.history.back();
+    await flushHistory();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+    expect(window.location.pathname).toBe("/add-point/point-info-form/");
+  });
+
+  it("does not match a string path by suffix", async () => {
+    manager().configure({ basePath: "/add-point" });
+    go("/add-point/options/");
+    go("/add-point/nested/point-info-form/");
+    const onBack = vi.fn();
+    manager().register(onBack, "/point-info-form", true);
+    await flushHistory();
+
+    window.history.back();
+    await flushHistory(); // the press lands under the trap
+    await flushHistory(); // the manager completes the back
+
+    expect(onBack).not.toHaveBeenCalled();
+    // The press is not swallowed: the user leaves the page in one press.
+    expect(window.location.pathname).toBe("/add-point/options/");
+  });
+
+  it("matches a RegExp against the app path", async () => {
+    manager().configure({ basePath: "/add-point" });
+    go("/add-point/options/");
+    go("/add-point/work-hours/");
+    const onBack = vi.fn();
+    manager().register(onBack, /^\/work-hours\/?$/, true);
+    await flushHistory();
+
+    window.history.back();
+    await flushHistory();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fire a RegExp that does not match the app path", async () => {
+    onFormUnderBasePath();
+    const onBack = vi.fn();
+    manager().register(onBack, /^\/work-hours/, true);
+    await flushHistory();
+
+    window.history.back();
+    await flushHistory(); // the press lands under the trap
+    await flushHistory(); // the manager completes the back
+
+    expect(onBack).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/add-point/options/");
+  });
+
+  it("matches the full pathname when no basePath is configured", async () => {
+    go("/a/");
+    go("/b/");
+    const onBack = vi.fn();
+    manager().register(onBack, "/b", true);
+    await flushHistory();
+
+    window.history.back();
+    await flushHistory();
+
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("useBackIntercept with a RegExp path", () => {
+  it("does not re-register when an inline regex literal re-renders", () => {
+    const register = vi.spyOn(BackInterceptManager.getInstance(), "register");
+    function Screen({ tick }: { tick: number }) {
+      useBackIntercept(() => {}, /^\/work-hours/);
+      return <span>{tick}</span>;
+    }
+
+    const view = render(<Screen tick={0} />);
+    view.rerender(<Screen tick={1} />);
+    view.rerender(<Screen tick={2} />);
+
+    expect(register).toHaveBeenCalledTimes(1);
+    view.unmount();
+  });
+});
+
+describe("BackInterceptManager trap bookkeeping", () => {
+  const manager = () => BackInterceptManager.getInstance();
+  const go = (url: string) => window.history.pushState({}, "", url);
+
+  it("skips a trap left behind on a page the user moved on from", async () => {
+    go("/options/");
+    go("/form/");
+    const id = manager().register(vi.fn(), "/form", true); // trap on /form/
+    await flushHistory();
+    go("/rewards/"); // the user moves on
+    manager().unregister(id); // the form unmounts
+    await flushHistory();
+
+    window.history.back(); // rewards → form (lands on the leftover trap)
+    await flushHistory();
+    await flushHistory(); // the manager steps past the trap
+    expect(window.location.pathname).toBe("/form/");
+    expect(window.history.state?.__backInterceptTrap).toBeFalsy();
+
+    window.history.back(); // must leave the form, not stay on its duplicate
+    await flushHistory();
+    expect(window.location.pathname).toBe("/options/");
+  });
+
+  it("does not fire on a forward press", async () => {
+    go("/a/");
+    const onBack = vi.fn();
+    manager().register(onBack, "*", true); // trap on /a/
+    await flushHistory();
+    go("/b/");
+
+    window.history.back(); // onto the /a/ trap entry — swallowed
+    await flushHistory();
+    window.history.forward(); // back to /b/
+    await flushHistory();
+
+    expect(onBack).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/b/");
+  });
+});
+
+describe("routerBackOrShutdown with an intercept trap on top", () => {
+  it("leaves the page in one call instead of only popping the trap", async () => {
+    window.history.pushState({}, "", "/list/");
+    window.history.pushState({}, "", "/detail/");
+    BackInterceptManager.getInstance().register(vi.fn(), "/detail", true);
+    await flushHistory();
+
+    const bridge = {
+      send: vi.fn().mockResolvedValue(undefined),
+      flushBatch: vi.fn().mockResolvedValue(undefined),
+    } as unknown as IBridgeManager;
+    const { useBridgeBack } = createBridgeBackNavigation(bridge);
+
+    let goBack: (() => Promise<void>) | undefined;
+    function Screen() {
+      const { routerBackOrShutdown } = useBridgeBack({ mode: "browser" });
+      goBack = () => routerBackOrShutdown(BridgeBackAction.RouterBack);
+      return null;
+    }
+
+    const view = render(<Screen />);
+    await flushHistory();
+    await goBack?.();
+    await flushHistory();
+
+    expect(window.location.pathname).toBe("/list/");
+
+    view.unmount();
   });
 });
 

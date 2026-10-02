@@ -11,7 +11,11 @@ export {
   type CreateBridgeBackNavigationOptions,
   createBridgeBackNavigation,
 } from "./createBridgeBackNavigation";
-export { BackInterceptManager } from "./navigation/BackInterceptManager";
+export {
+  type BackInterceptConfig,
+  BackInterceptManager,
+  type BackInterceptPath,
+} from "./navigation/BackInterceptManager";
 export {
   clearSessionHistory,
   ensureSessionHistoryTracking,

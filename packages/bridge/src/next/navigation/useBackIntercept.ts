@@ -1,7 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef } from "react";
-import { BackInterceptManager } from "./BackInterceptManager";
+import {
+  BackInterceptManager,
+  type BackInterceptPath,
+} from "./BackInterceptManager";
 
 /**
  * Declarative hook that intercepts the browser back button.
@@ -12,8 +15,11 @@ import { BackInterceptManager } from "./BackInterceptManager";
  *
  * @param onBackCallback - Callback invoked when the user presses browser back.
  *   Changing this does NOT cause re-registration (preserves stack position).
- * @param pathName - Optional path to scope the intercept. When provided, only
- *   fires when the current URL pathname matches. Defaults to global ("*").
+ * @param pathName - Optional page to scope the intercept to. A string matches
+ *   that app path exactly (no `basePath`, trailing slash ignored — the value
+ *   `usePathname()` returns); a `RegExp` is tested against the same path.
+ *   Defaults to global ("*"). Set the `basePath` through
+ *   `createBridgeBackNavigation(bridge, { basePath })`.
  * @param isActive - Whether the intercept is enabled. Toggling this prop
  *   updates the entry in-place (via manager.update) without changing its stack
  *   position, so a declarative `useBackIntercept(cb, path, isModalOpen)` works.
@@ -21,7 +27,7 @@ import { BackInterceptManager } from "./BackInterceptManager";
  */
 export function useBackIntercept(
   onBackCallback: () => void,
-  pathName?: string,
+  pathName?: BackInterceptPath,
   initiallyActive = true,
 ) {
   const manager = BackInterceptManager.getInstance();
@@ -38,11 +44,17 @@ export function useBackIntercept(
   const initiallyActiveRef = useRef(initiallyActive);
   initiallyActiveRef.current = initiallyActive;
 
-  // biome-ignore lint/correctness/useExhaustiveDependencies: manager is a stable singleton; initiallyActive intentionally read from ref
+  // An inline regex literal is a new object every render; key on its source
+  // and flags so it does not re-register (and lose its stack position) each time.
+  const pathRef = useRef(pathName);
+  pathRef.current = pathName;
+  const pathKey = pathName instanceof RegExp ? String(pathName) : pathName;
+
+  // biome-ignore lint/correctness/useExhaustiveDependencies: manager is a stable singleton; initiallyActive and the path object are read from refs, keyed by pathKey
   useEffect(() => {
     idRef.current = manager.register(
       () => callbackRef.current(),
-      pathName,
+      pathRef.current,
       initiallyActiveRef.current,
     );
     return () => {
@@ -51,7 +63,7 @@ export function useBackIntercept(
         idRef.current = null;
       }
     };
-  }, [pathName]);
+  }, [pathKey]);
 
   // Honor the documented contract: toggling initiallyActive updates the entry
   // in place (preserving its stack position) instead of being ignored.
