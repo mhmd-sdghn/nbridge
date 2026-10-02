@@ -1,5 +1,33 @@
 # nbridge
 
+## 0.3.0
+
+### Minor Changes
+
+- Fix back intercepts that never fired, double-stepped, or wasted a back press.
+
+  **Breaking — path matching.** A string path passed to `useBackIntercept` /
+  `BackInterceptManager.register` now matches that app path **exactly** instead of
+  by suffix, and a `RegExp` is now accepted. Paths are compared without the
+  Next.js `basePath` and ignore a trailing slash, so the value `usePathname()`
+  returns works as-is. Pass the `basePath` once:
+  `createBridgeBackNavigation(bridge, { basePath: "/my-app" })`. A bare segment
+  that relied on suffix matching (e.g. `"details"` for `/shop/details`) must
+  become the full app path or a `RegExp`.
+
+  Fixes:
+
+  - Under a `basePath` or `trailingSlash: true`, a page-scoped intercept never
+    matched, so back skipped it and moved two history entries at once.
+  - A forward press, or a back press between two real pages, no longer fires an
+    intercept; only stepping back off the intercept's own history entry does.
+  - The extra history entry left behind when the user moved on from an armed
+    page is now skipped on return, instead of costing a back press that did
+    nothing.
+  - `routerBackOrShutdown` now steps past an armed intercept's history entry, so
+    one call leaves the page instead of only popping that entry. New
+    `BackInterceptManager.backPastTrap()` does the same for custom back buttons.
+
 ## 0.2.1
 
 ### Patch Changes
