@@ -16,6 +16,7 @@ export {
 } from "./constants/messagePriority";
 export { PROTOCOL } from "./constants/protocol";
 // Core exports
+export { BridgeNoHostError } from "./core/adapters";
 export { BridgeManager, createBridge, getBridge } from "./core/BridgeManager";
 export { BridgeValidationError, formatIssues } from "./core/validate";
 // Host Rules exports

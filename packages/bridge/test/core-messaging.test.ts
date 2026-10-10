@@ -1,6 +1,7 @@
-import { afterEach, describe, expect, it } from "vitest";
-import { createBridge, getBridge } from "../src";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { BridgeNoHostError, createBridge, getBridge } from "../src";
 import type { BridgeManager } from "../src/core/BridgeManager";
+import type { Middleware } from "../src/types";
 import { installAndroidBridge, receiveFromNative, until } from "./helpers";
 
 let cleanup: Array<() => void> = [];
@@ -265,5 +266,61 @@ describe("web adapter honesty", () => {
     await bridge.send("echo", { hi: true });
     await until(() => received.length === 1);
     expect(received[0]).toEqual({ hi: true });
+  });
+});
+
+describe("web adapter in production", () => {
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    vi.restoreAllMocks();
+  });
+
+  it("send() resolves unsuccessful without throwing, logging, middleware or queueing", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const bridge = track(
+      createBridge({ queue: { enabled: true, autoFlush: false } }),
+    );
+    const middleware = vi.fn<Middleware>((message, _ctx, next) =>
+      next(message),
+    );
+    bridge.use(middleware);
+
+    const result = await bridge.send("shutdown", {});
+
+    expect(result.success).toBe(false);
+    expect(result.error).toMatch(/no native bridge or parent frame/i);
+    expect(consoleError).not.toHaveBeenCalled();
+    expect(middleware).not.toHaveBeenCalled();
+    expect(bridge.getQueueStats()?.size).toBe(0);
+  });
+
+  it("sendWithResponse() rejects with BridgeNoHostError without waiting for the timeout", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => {});
+    const bridge = track(createBridge({ defaultTimeout: 60_000 }));
+
+    await expect(bridge.sendWithResponse("getUser", {})).rejects.toThrow(
+      BridgeNoHostError,
+    );
+    expect(consoleError).not.toHaveBeenCalled();
+  });
+
+  it("loopback mode still round-trips", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const bridge = track(createBridge({ webLoopback: true }));
+
+    const received: unknown[] = [];
+    bridge.on("echo", (payload) => {
+      received.push(payload);
+    });
+
+    const result = await bridge.send("echo", { hi: true });
+    await until(() => received.length === 1);
+    expect(result.success).toBe(true);
   });
 });

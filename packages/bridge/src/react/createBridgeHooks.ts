@@ -419,6 +419,7 @@ export function createBridgeHooks<
         setResponse(null);
         try {
           const result = await bridge.send(requestType, payload);
+          if (!result.success) throw new Error(result.error);
           if (result.id) {
             const id = result.id;
             pendingIds.current.add(id);

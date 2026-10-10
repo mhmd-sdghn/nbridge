@@ -2,6 +2,19 @@ import type { BridgeMessage } from "../../types";
 import { type BridgeLogger, parseBridgeFrame } from "../../utils/helpers";
 import type { IPlatformAdapter } from "./IPlatformAdapter";
 
+export class BridgeNoHostError extends Error {
+  public readonly code = "NBRIDGE_NO_HOST";
+
+  constructor(public readonly messageType: string) {
+    super(
+      `nBridge: no native bridge or parent frame found for message "${messageType}". ` +
+        "Running in a plain browser tab? Enable `webLoopback: true` for local development, " +
+        "or open the page inside a WebView/iframe host.",
+    );
+    this.name = "BridgeNoHostError";
+  }
+}
+
 /**
  * Web/Browser platform adapter (for testing or fallback)
  * Single Responsibility: Handle web-only communication via postMessage
@@ -58,11 +71,7 @@ export class WebAdapter implements IPlatformAdapter {
 
     // Fail loudly instead of silently dropping the message and letting
     // send() report success while sendWithResponse() times out mysteriously.
-    throw new Error(
-      `nBridge: no native bridge or parent frame found for message "${message.type}". ` +
-        "Running in a plain browser tab? Enable `webLoopback: true` for local development, " +
-        "or open the page inside a WebView/iframe host.",
-    );
+    throw new BridgeNoHostError(message.type);
   }
 
   public destroy(): void {

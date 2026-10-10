@@ -106,7 +106,7 @@ Any [Standard Schema](https://standardschema.dev) validator works — zod 3.24+/
 
 ## Developing without a native host
 
-In a plain browser tab there is no host, so `send()` **throws** by design. For local development, enable loopback mode — messages you send are delivered back to your own handlers:
+In a plain browser tab there is no host, so `send()` **throws** by design (in production builds it resolves `{ success: false }` quietly instead — see [Plain Web](./platforms/web.md#in-production)). For local development, enable loopback mode — messages you send are delivered back to your own handlers:
 
 ```ts
 const bridge = createBridge({ webLoopback: true });

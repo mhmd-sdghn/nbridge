@@ -1,5 +1,5 @@
 import { act, renderHook, waitFor } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { createBridgeHooks } from "../src/react";
 import { installAndroidBridge, receiveFromNative, until } from "./helpers";
 
@@ -195,6 +195,25 @@ describe("useBridgeRPC", () => {
       receiveFromNative({ type: "fetch_response", id: idB, payload: "B" }),
     );
     await waitFor(() => expect(result.current.response).toBe("B"));
+    expect(result.current.loading).toBe(false);
+  });
+
+  it("sets the error at once when there is no host in production", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const hooks = createBridgeHooks();
+    cleanup.push(() => {
+      hooks.instance.destroy();
+      vi.unstubAllEnvs();
+    });
+    const { result } = renderHook(() =>
+      hooks.useBridgeRPC<{ n: number }, string>("fetch"),
+    );
+
+    await act(async () => {
+      await result.current.call({ n: 1 }, 60_000);
+    });
+
+    expect(result.current.error?.message).toMatch(/no native bridge/i);
     expect(result.current.loading).toBe(false);
   });
 });

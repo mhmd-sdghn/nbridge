@@ -10,6 +10,7 @@ export default defineConfig({
   format: ["esm"],
   dts: true,
   platform: "browser",
+  define: { "process.env.NODE_ENV": "process.env.NODE_ENV" },
   deps: {
     neverBundle: ["react", "react-dom", "react/jsx-runtime", "next/navigation"],
   },

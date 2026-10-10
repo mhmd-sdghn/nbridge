@@ -31,6 +31,7 @@ import type {
   ResponseFor,
   SchemaRegistry,
 } from "../types/schema";
+import { isProductionEnv } from "../utils/env";
 import {
   BridgeLogger,
   byteLength,
@@ -38,7 +39,7 @@ import {
   isValidMessage,
   safeStringify,
 } from "../utils/helpers";
-import type { IPlatformAdapter } from "./adapters";
+import { BridgeNoHostError, type IPlatformAdapter } from "./adapters";
 import { BatchManager } from "./BatchManager";
 import { BridgeDevTools } from "./BridgeDevTools";
 import { CompressionManager } from "./CompressionManager";
@@ -505,6 +506,13 @@ export class BridgeManager<
 
     const message = createMessage(type, outgoingPayload);
 
+    if (this.hasNoHostInProduction()) {
+      const error = new BridgeNoHostError(type);
+      this.metricsCollector?.recordFailed(message.id ?? message.type);
+      if (options.expectResponse) throw error;
+      return { success: false, id: message.id, error: error.message };
+    }
+
     if (options.expectResponse) {
       const timeout = options.timeout ?? this.config.defaultTimeout;
 
@@ -590,6 +598,14 @@ export class BridgeManager<
     }
 
     return (await this.validateResponse(type, response.data)) as R;
+  }
+
+  private hasNoHostInProduction(): boolean {
+    return (
+      this.adapter.getPlatformType() === "web" &&
+      !this.config.webLoopback &&
+      isProductionEnv()
+    );
   }
 
   /** Validate an outgoing payload against its schema (if any) and return the

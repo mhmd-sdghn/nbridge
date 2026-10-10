@@ -6,4 +6,4 @@ export { AndroidAdapter } from "./AndroidAdapter";
 export { IframeAdapter } from "./IframeAdapter";
 export { IOSAdapter } from "./IOSAdapter";
 export type { IPlatformAdapter } from "./IPlatformAdapter";
-export { WebAdapter } from "./WebAdapter";
+export { BridgeNoHostError, WebAdapter } from "./WebAdapter";

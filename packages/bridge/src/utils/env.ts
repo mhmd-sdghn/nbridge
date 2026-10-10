@@ -5,7 +5,7 @@
  */
 function nodeEnv(): string | undefined {
   try {
-    return typeof process !== "undefined" ? process.env?.NODE_ENV : undefined;
+    return process.env.NODE_ENV;
   } catch {
     return undefined;
   }

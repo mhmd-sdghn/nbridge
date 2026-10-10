@@ -12,7 +12,29 @@ Running in a plain browser tab? Enable `webLoopback: true` for local development
 or open the page inside a WebView/iframe host.
 ```
 
-This is deliberate. Silently dropping messages would make `send()` report success while `sendWithResponse()` times out mysteriously — the least debuggable failure mode there is. If your app must run both embedded and standalone, branch on the platform:
+This is deliberate. Silently dropping messages would make `send()` report success while `sendWithResponse()` times out mysteriously — the least debuggable failure mode there is.
+
+The error is a `BridgeNoHostError` (`code: "NBRIDGE_NO_HOST"`), so you can tell it apart with `instanceof`.
+
+## In production
+
+A page built for a WebView still gets opened in a browser — a shared link, an
+OS that hands the URL to the default browser. There, a missing host is expected,
+not a bug. When `NODE_ENV` is `"production"`, nBridge goes quiet on plain web:
+
+| Call | Production, plain web | Development / test |
+| --- | --- | --- |
+| `send()` | resolves `{ success: false, error }` — nothing logged or thrown | throws `BridgeNoHostError` and logs it |
+| `sendWithResponse()` | rejects with `BridgeNoHostError`, nothing logged | rejects with `BridgeNoHostError` and logs it |
+
+Nothing reaches middleware, the batcher or the retry queue: no host can appear
+later, because the adapter is chosen once at startup. Native WebViews, iframes and
+`webLoopback` are unaffected.
+
+`NODE_ENV` comes from your bundler (Next.js, Vite and webpack set it in production
+builds). Without a bundler, nBridge stays loud.
+
+If your app must run both embedded and standalone, branch on the platform:
 
 ```ts
 import { createBridge } from "nbridge";
