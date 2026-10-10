@@ -1,5 +1,12 @@
 # playground-next
 
+## 0.0.8
+
+### Patch Changes
+
+- Updated dependencies [[`3d9c9e8`](https://github.com/mhmd-sdghn/nbridge/commit/3d9c9e8f1bec9b5bd09487db7e859231802ed916)]:
+  - nbridge@0.3.1
+
 ## 0.0.7
 
 ### Patch Changes
